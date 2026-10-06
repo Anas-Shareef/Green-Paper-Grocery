@@ -1,251 +1,253 @@
+import React from 'react'
 import Link from 'next/link'
+import { StoreLayout } from '@/components/storefront/StoreLayout'
+import { ProductCard } from '@/components/storefront/ProductCard'
+import { CategoryCard } from '@/components/storefront/CategoryCard'
 import { Button } from '@/components/ui/button'
 import {
-  Store,
+  getStorefrontCategories,
+  getStorefrontFeaturedProducts,
+} from '@/lib/services/storefront'
+import {
   ArrowRight,
-  Package,
-  Boxes,
-  LayoutDashboard,
-  ShieldCheck,
-  DollarSign,
-  Layers,
-  History,
+  ShoppingBag,
+  Sparkles,
+  MapPin,
 } from 'lucide-react'
 
-export default function HomePage() {
-  const activeModules = [
-    {
-      title: 'Products Management',
-      href: '/admin/products',
-      badge: 'Phase 4 Live',
-      desc: 'Catalog products with SKU, barcode camera scanning, category hierarchies, and multi-tier pricing guardrails.',
-      icon: Package,
-      features: ['Barcode Scanner', 'Pricing Guardrails', 'Soft Archive/Restore'],
-    },
-    {
-      title: 'Inventory & Stocktake',
-      href: '/admin/inventory',
-      badge: 'Phase 4 Live',
-      desc: 'Real-time inventory valuation, atomic stock mutations, movement audit trail, and physical count reconciliation.',
-      icon: Boxes,
-      features: ['Server Valuation', 'Stock Adjustments', 'Physical Stocktake'],
-    },
-    {
-      title: 'Operations Dashboard',
-      href: '/admin/dashboard',
-      badge: 'Phase 3 Live',
-      desc: 'Real-time financial performance, gross profit, sales summaries, and inventory restocking alerts.',
-      icon: LayoutDashboard,
-      features: ['Date Range Filters', 'Revenue & Gross Profit', 'Restock Triggers'],
-    },
-  ]
+export const revalidate = 60 // Revalidate home page every minute
 
-  const architectureHighlights = [
-    {
-      name: 'Atomic Stock Mutations',
-      desc: 'Enforced via PostgreSQL `mutate_stock_atomic` RPC to prevent silent updates, race conditions, and negative stock.',
-      icon: Layers,
-    },
-    {
-      name: 'Financial Price Guardrails',
-      desc: 'Server-enforced checks ensuring normal & promo prices never drop below the minimum selling price floor.',
-      icon: DollarSign,
-    },
-    {
-      name: 'Audit Trail & Price History',
-      desc: 'Immutable historical logs tracking every price change, stock movement, count reconciliation, and user action.',
-      icon: History,
-    },
-    {
-      name: 'Role-Based Security & RLS',
-      desc: 'Centralized permissions for Owner, Admin, and Staff roles with PostgreSQL Row-Level Security policies.',
-      icon: ShieldCheck,
-    },
-  ]
+export default async function StorefrontHomePage() {
+  const [categories, featuredProducts] = await Promise.all([
+    getStorefrontCategories(),
+    getStorefrontFeaturedProducts(8),
+  ])
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      {/* Top Header */}
-      <header className="border-b border-border bg-card/60 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shadow-sm shadow-emerald-600/30">
-              <Store className="h-5 w-5" />
+    <StoreLayout>
+      {/* 1. Hero Section */}
+      <section className="relative overflow-hidden bg-gradient-to-b from-emerald-50/60 via-background to-background dark:from-emerald-950/20 py-10 md:py-16 border-b border-border/50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+            {/* Left Column: Headline and CTAs */}
+            <div className="lg:col-span-7 space-y-5">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200/60">
+                <MapPin className="h-3.5 w-3.5 text-emerald-600" />
+                <span>Zone 19, Abu Dhabi Local Fulfillment</span>
+              </div>
+
+              <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-foreground leading-[1.1]">
+                Fresh Groceries, <br />
+                <span className="text-emerald-600">Delivered Fast</span> in Zone 19
+              </h1>
+
+              <p className="text-base sm:text-lg text-muted-foreground leading-relaxed max-w-xl">
+                Farm-fresh vegetables, dairy, rice, bakery, and daily pantry staples delivered direct to your door. Authentic quality, fair AED pricing, and fast local delivery.
+              </p>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-3 pt-2">
+                <Link href="/shop">
+                  <Button
+                    size="lg"
+                    className="h-12 px-6 rounded-xl font-bold text-sm bg-emerald-600 hover:bg-emerald-700 text-white gap-2 shadow-sm shadow-emerald-600/30"
+                  >
+                    <ShoppingBag className="h-4 w-4" /> Shop Fresh Products
+                  </Button>
+                </Link>
+                <Link href="/categories">
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="h-12 px-6 rounded-xl font-bold text-sm border-border hover:bg-muted"
+                  >
+                    Browse Categories
+                  </Button>
+                </Link>
+              </div>
+
+              {/* Trust Badges */}
+              <div className="pt-4 flex flex-wrap items-center gap-6 text-xs text-muted-foreground font-medium">
+                <div className="flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 flex items-center justify-center font-bold">
+                    ✓
+                  </div>
+                  <span>Free delivery over AED 100</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 flex items-center justify-center font-bold">
+                    ✓
+                  </div>
+                  <span>Cash & Card on Delivery</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 flex items-center justify-center font-bold">
+                    ✓
+                  </div>
+                  <span>30-min express fulfillment</span>
+                </div>
+              </div>
             </div>
-            <div>
-              <span className="font-bold text-base tracking-tight text-foreground block leading-tight">
-                Baqqala Grocery
-              </span>
-              <span className="text-xs text-muted-foreground font-medium">
-                Zone 19, Abu Dhabi
-              </span>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-3">
-            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              Phase 4: Products & Inventory Live
-            </span>
+            {/* Right Column: Visual Showcase Card */}
+            <div className="lg:col-span-5">
+              <div className="relative rounded-3xl border border-emerald-600/20 bg-gradient-to-br from-emerald-600/10 via-emerald-600/5 to-transparent p-6 sm:p-8 shadow-lg space-y-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                    Baqqala Quick Basket
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white">
+                    Live Stock
+                  </span>
+                </div>
 
-            <Link href="/login">
-              <Button variant="outline" size="sm" className="text-xs font-semibold">
-                Sign In
-              </Button>
-            </Link>
-
-            <Link href="/admin/dashboard">
-              <Button size="sm" className="text-xs font-semibold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white">
-                Admin Portal <ArrowRight className="h-3.5 w-3.5" />
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-16 space-y-16">
-        {/* Hero Section */}
-        <div className="max-w-3xl space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-            <span>Operating System for Zone 19 Physical Grocery</span>
-          </div>
-
-          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-foreground leading-[1.15]">
-            Baqqala Grocery Management & Customer Platform
-          </h1>
-
-          <p className="text-base sm:text-lg text-muted-foreground leading-relaxed">
-            Enterprise grocery operations platform built with Next.js 16 App Router, Turbopack,
-            Tailwind CSS v4, shadcn/ui, and Supabase PostgreSQL with atomic inventory reconciliation.
-          </p>
-
-          <div className="flex flex-wrap items-center gap-3 pt-3">
-            <Link href="/admin/products">
-              <Button size="lg" className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold">
-                <Package className="h-4 w-4" /> Products Catalog
-              </Button>
-            </Link>
-            <Link href="/admin/inventory">
-              <Button size="lg" variant="outline" className="gap-2 font-semibold">
-                <Boxes className="h-4 w-4" /> Inventory Control
-              </Button>
-            </Link>
-            <Link href="/admin/dashboard">
-              <Button size="lg" variant="secondary" className="gap-2 font-semibold">
-                <LayoutDashboard className="h-4 w-4" /> Operations Dashboard
-              </Button>
-            </Link>
-          </div>
-        </div>
-
-        {/* Operational Modules Grid */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">
-              Operational Management Modules
-            </h2>
-            <span className="text-xs font-mono text-muted-foreground">
-              Phase 1 → Phase 4 Active
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {activeModules.map((mod) => {
-              const Icon = mod.icon
-              return (
-                <div
-                  key={mod.title}
-                  className="rounded-2xl border border-border bg-card p-6 shadow-xs flex flex-col justify-between hover:border-emerald-600/40 hover:shadow-md transition-all"
-                >
-                  <div className="space-y-4">
-                    <div className="flex items-start justify-between">
-                      <div className="h-11 w-11 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 flex items-center justify-center">
-                        <Icon className="h-5 w-5" />
+                <div className="space-y-3">
+                  <div className="p-3.5 rounded-2xl bg-card border border-border/70 flex items-center justify-between shadow-2xs">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 flex items-center justify-center font-bold">
+                        🥛
                       </div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                        {mod.badge}
-                      </span>
+                      <div>
+                        <h4 className="font-bold text-xs text-foreground">Fresh Dairy & Milk</h4>
+                        <p className="text-[11px] text-muted-foreground">Cold-chain restocked daily</p>
+                      </div>
                     </div>
-
-                    <div>
-                      <h3 className="text-lg font-bold text-foreground">
-                        {mod.title}
-                      </h3>
-                      <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-                        {mod.desc}
-                      </p>
-                    </div>
-
-                    <div className="pt-2 border-t border-border flex flex-wrap gap-1.5">
-                      {mod.features.map((f) => (
-                        <span
-                          key={f}
-                          className="px-2 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground"
-                        >
-                          {f}
-                        </span>
-                      ))}
-                    </div>
+                    <span className="text-xs font-bold text-emerald-600">Fresh</span>
                   </div>
 
-                  <Link href={mod.href} className="pt-6 block">
-                    <Button variant="outline" className="w-full justify-between text-xs font-semibold group">
-                      Open Module
-                      <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
-                    </Button>
-                  </Link>
+                  <div className="p-3.5 rounded-2xl bg-card border border-border/70 flex items-center justify-between shadow-2xs">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 flex items-center justify-center font-bold">
+                        🥬
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-xs text-foreground">Vegetables & Greens</h4>
+                        <p className="text-[11px] text-muted-foreground">Crisp farm harvests</p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold text-emerald-600">Organic</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-card border border-border/70 flex items-center justify-between shadow-2xs">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 flex items-center justify-center font-bold">
+                        🍞
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-xs text-foreground">Bakery & Pantry</h4>
+                        <p className="text-[11px] text-muted-foreground">Basmati rice, tea, oils & bread</p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold text-emerald-600">Staples</span>
+                  </div>
                 </div>
-              )
-            })}
+
+                <Link href="/shop" className="block pt-2">
+                  <Button variant="outline" className="w-full rounded-xl text-xs font-bold justify-between group">
+                    <span>Explore All Items in Catalog</span>
+                    <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />
+                  </Button>
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
+      </section>
 
-        {/* Technical Architecture Highlights */}
-        <div className="rounded-2xl border border-border bg-card p-6 sm:p-8 space-y-6">
-          <div className="pb-4 border-b border-border">
-            <h2 className="text-lg font-bold text-foreground">
-              Production Architecture Highlights
+      {/* 2. Categories Section */}
+      <section className="py-12 md:py-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-end justify-between mb-8">
+          <div>
+            <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-600 block mb-1">
+              Organized Catalog
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+              Shop by Category
             </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Robust data integrity mechanisms enforcing financial and stock accuracy.
+          </div>
+          <Link
+            href="/categories"
+            className="text-xs font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 group"
+          >
+            All Categories <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+          </Link>
+        </div>
+
+        {categories.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4">
+            {categories.slice(0, 6).map((category) => (
+              <CategoryCard key={category.id} category={category} />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-border p-8 text-center text-muted-foreground text-xs">
+            Categories currently updating. Check back shortly.
+          </div>
+        )}
+      </section>
+
+      {/* 3. Popular & Featured Products Section */}
+      <section className="py-12 md:py-16 bg-muted/20 border-y border-border/50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-end justify-between mb-8">
+            <div>
+              <div className="inline-flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-emerald-600 mb-1">
+                <Sparkles className="h-3.5 w-3.5" /> Best Picks for You
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+                Popular in Zone 19
+              </h2>
+            </div>
+            <Link
+              href="/shop"
+              className="text-xs font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 group"
+            >
+              View Full Catalog <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+            </Link>
+          </div>
+
+          {featuredProducts.length > 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
+              {featuredProducts.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-border p-12 text-center text-muted-foreground text-xs">
+              No products found. Please check back later.
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 4. Local Community Banner */}
+      <section className="py-12 md:py-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="rounded-3xl bg-gradient-to-r from-emerald-800 to-emerald-950 text-white p-8 sm:p-12 shadow-xl relative overflow-hidden">
+          <div className="max-w-2xl space-y-4 relative z-10">
+            <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-white/10 text-emerald-200 border border-white/20">
+              Direct to Your Villa or Apartment
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold tracking-tight">
+              Order Your Daily Grocery in Seconds
+            </h2>
+            <p className="text-sm text-emerald-100/90 leading-relaxed">
+              No long queues or traffic. Baqqala delivers milk, bread, vegetables, and pantry staples straight to your doorstep across Zone 19 with trusted neighborhood service.
             </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-            {architectureHighlights.map((item) => {
-              const Icon = item.icon
-              return (
-                <div key={item.name} className="space-y-2">
-                  <div className="flex items-center gap-2 font-semibold text-sm text-foreground">
-                    <div className="h-7 w-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                      <Icon className="h-3.5 w-3.5" />
-                    </div>
-                    <span>{item.name}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed pl-9">
-                    {item.desc}
-                  </p>
-                </div>
-              )
-            })}
+            <div className="pt-2 flex flex-wrap gap-3">
+              <Link href="/shop">
+                <Button size="lg" className="rounded-xl font-bold text-xs bg-white text-emerald-900 hover:bg-emerald-50">
+                  Start Shopping Now
+                </Button>
+              </Link>
+              <Link href="/categories">
+                <Button size="lg" variant="outline" className="rounded-xl font-bold text-xs border-white/30 text-white hover:bg-white/10">
+                  Browse All Categories
+                </Button>
+              </Link>
+            </div>
           </div>
         </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-border bg-card py-6 mt-auto">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
-          <p>© {new Date().getFullYear()} Baqqala Grocery. Zone 19, Abu Dhabi.</p>
-          <div className="flex items-center gap-4 font-mono text-[11px]">
-            <span>Next.js 16 App Router</span>
-            <span>•</span>
-            <span>Supabase PostgreSQL</span>
-            <span>•</span>
-            <span>Tailwind v4</span>
-          </div>
-        </div>
-      </footer>
-    </div>
+      </section>
+    </StoreLayout>
   )
 }

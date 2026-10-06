@@ -3,12 +3,12 @@
 import React, { useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { signIn } from '@/lib/auth/actions'
+import { signUpCustomer } from '@/lib/auth/actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Store, Lock, Mail, AlertCircle, Loader2 } from 'lucide-react'
+import { Store, Lock, Mail, User, Phone, AlertCircle, Loader2 } from 'lucide-react'
 
-export default function LoginPage() {
+export default function RegisterPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [isPending, startTransition] = useTransition()
@@ -23,19 +23,12 @@ export default function LoginPage() {
     const formData = new FormData(event.currentTarget)
 
     startTransition(async () => {
-      const result = await signIn(formData)
+      const result = await signUpCustomer(formData)
       if (!result.success) {
-        setErrorMsg(result.error ?? 'Authentication failed')
+        setErrorMsg(result.error ?? 'Registration failed')
       } else {
-        if (result.role === 'customer') {
-          // If customer, redirect to customer destination or account
-          const target = nextUrl && !nextUrl.startsWith('/admin') ? nextUrl : '/account'
-          router.push(target)
-        } else {
-          // If staff/admin/owner, redirect to admin destination
-          const target = nextUrl || '/admin/dashboard'
-          router.push(target)
-        }
+        const target = nextUrl && !nextUrl.startsWith('/admin') ? nextUrl : '/account'
+        router.push(target)
         router.refresh()
       }
     })
@@ -52,16 +45,16 @@ export default function LoginPage() {
             </div>
           </Link>
           <h1 className="text-2xl font-black tracking-tight text-foreground sm:text-3xl">
-            Welcome to Baqqala
+            Create an Account
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-muted-foreground">
-            Sign in to track orders, manage addresses, and checkout quickly
+            Join Baqqala Grocery for fast express grocery deliveries in Zone 19
           </p>
         </div>
 
-        {/* Login Card */}
+        {/* Form Card */}
         <div className="rounded-3xl border border-border bg-card p-8 shadow-sm space-y-6">
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {errorMsg && (
               <div className="rounded-xl bg-destructive/10 border border-destructive/20 p-3.5 flex items-start gap-3 text-destructive text-xs">
                 <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -69,6 +62,29 @@ export default function LoginPage() {
               </div>
             )}
 
+            {/* Full Name */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="fullName"
+                className="text-xs font-bold uppercase tracking-wider text-muted-foreground"
+              >
+                Full Name
+              </label>
+              <div className="relative">
+                <Input
+                  id="fullName"
+                  name="fullName"
+                  type="text"
+                  required
+                  placeholder="e.g. Fatima Al Hosani"
+                  className="pl-9 h-11 rounded-xl text-xs font-medium"
+                  disabled={isPending}
+                />
+                <User className="absolute left-3 top-3.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+              </div>
+            </div>
+
+            {/* Email */}
             <div className="space-y-1.5">
               <label
                 htmlFor="email"
@@ -83,7 +99,7 @@ export default function LoginPage() {
                   type="email"
                   autoComplete="email"
                   required
-                  placeholder="your.email@example.com"
+                  placeholder="fatima@example.com"
                   className="pl-9 h-11 rounded-xl text-xs font-medium"
                   disabled={isPending}
                 />
@@ -91,23 +107,45 @@ export default function LoginPage() {
               </div>
             </div>
 
+            {/* Mobile Phone (UAE) */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="password"
-                  className="text-xs font-bold uppercase tracking-wider text-muted-foreground"
-                >
-                  Password
-                </label>
+              <label
+                htmlFor="phone"
+                className="text-xs font-bold uppercase tracking-wider text-muted-foreground"
+              >
+                Mobile Phone (UAE)
+              </label>
+              <div className="relative">
+                <Input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  required
+                  placeholder="050 123 4567"
+                  className="pl-9 h-11 rounded-xl text-xs font-medium"
+                  disabled={isPending}
+                />
+                <Phone className="absolute left-3 top-3.5 h-4 w-4 text-muted-foreground pointer-events-none" />
               </div>
+            </div>
+
+            {/* Password */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="password"
+                className="text-xs font-bold uppercase tracking-wider text-muted-foreground"
+              >
+                Password
+              </label>
               <div className="relative">
                 <Input
                   id="password"
                   name="password"
                   type="password"
-                  autoComplete="current-password"
+                  autoComplete="new-password"
                   required
-                  placeholder="••••••••••••"
+                  minLength={6}
+                  placeholder="Minimum 6 characters"
                   className="pl-9 h-11 rounded-xl text-xs font-medium"
                   disabled={isPending}
                 />
@@ -118,28 +156,28 @@ export default function LoginPage() {
             <Button
               type="submit"
               disabled={isPending}
-              className="w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition-all"
+              className="w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition-all pt-1"
             >
               {isPending ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Signing In...
+                  Creating Account...
                 </>
               ) : (
-                'Sign In to Account'
+                'Create Customer Account'
               )}
             </Button>
           </form>
 
-          {/* Registration Link */}
+          {/* Sign In Link */}
           <div className="pt-4 border-t border-border text-center space-y-2">
             <p className="text-xs text-muted-foreground">
-              Don&apos;t have an account yet?{' '}
+              Already have an account?{' '}
               <Link
-                href={`/register${nextUrl ? `?next=${encodeURIComponent(nextUrl)}` : ''}`}
+                href={`/login${nextUrl ? `?next=${encodeURIComponent(nextUrl)}` : ''}`}
                 className="font-bold text-emerald-600 hover:underline"
               >
-                Create an Account
+                Sign In
               </Link>
             </p>
             <div>

@@ -152,6 +152,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'supplier_invoices.view',
     'settings.view',
   ],
+  customer: [],
 }
 
 /**

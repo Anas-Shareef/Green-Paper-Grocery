@@ -6,7 +6,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
-export type UserRole = 'owner' | 'admin' | 'staff'
+export type UserRole = 'owner' | 'admin' | 'staff' | 'customer'
 export type OrderSource = 'website' | 'whatsapp' | 'manual' | 'walk_in'
 export type OrderStatus =
   | 'pending'
@@ -224,7 +224,9 @@ export interface Database {
       customers: {
         Row: {
           id: string
+          auth_user_id: string | null
           name: string
+          email: string | null
           mobile: string
           whatsapp: string | null
           address: string
@@ -243,7 +245,9 @@ export interface Database {
         }
         Insert: {
           id?: string
+          auth_user_id?: string | null
           name: string
+          email?: string | null
           mobile: string
           whatsapp?: string | null
           address: string
@@ -262,7 +266,9 @@ export interface Database {
         }
         Update: {
           id?: string
+          auth_user_id?: string | null
           name?: string
+          email?: string | null
           mobile?: string
           whatsapp?: string | null
           address?: string
@@ -279,7 +285,75 @@ export interface Database {
           created_at?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: 'customers_auth_user_id_fkey'
+            columns: ['auth_user_id']
+            referencedRelation: 'users'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      customer_addresses: {
+        Row: {
+          id: string
+          customer_id: string
+          label: string
+          recipient_name: string
+          phone: string
+          building_or_villa: string
+          street: string
+          area: string
+          city: string
+          emirate: string
+          zone: string
+          delivery_instructions: string | null
+          is_default: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          customer_id: string
+          label?: string
+          recipient_name: string
+          phone: string
+          building_or_villa: string
+          street: string
+          area: string
+          city?: string
+          emirate?: string
+          zone?: string
+          delivery_instructions?: string | null
+          is_default?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          customer_id?: string
+          label?: string
+          recipient_name?: string
+          phone?: string
+          building_or_villa?: string
+          street?: string
+          area?: string
+          city?: string
+          emirate?: string
+          zone?: string
+          delivery_instructions?: string | null
+          is_default?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'customer_addresses_customer_id_fkey'
+            columns: ['customer_id']
+            referencedRelation: 'customers'
+            referencedColumns: ['id']
+          },
+        ]
       }
       suppliers: {
         Row: {
@@ -398,6 +472,8 @@ export interface Database {
           payment_status: PaymentStatus
           subtotal: number
           discount_amount: number
+          tax_amount: number
+          delivery_fee: number
           total_amount: number
           delivery_address: string
           delivery_notes: string | null
@@ -416,6 +492,8 @@ export interface Database {
           payment_status?: PaymentStatus
           subtotal?: number
           discount_amount?: number
+          tax_amount?: number
+          delivery_fee?: number
           total_amount?: number
           delivery_address: string
           delivery_notes?: string | null
@@ -434,6 +512,8 @@ export interface Database {
           payment_status?: PaymentStatus
           subtotal?: number
           discount_amount?: number
+          tax_amount?: number
+          delivery_fee?: number
           total_amount?: number
           delivery_address?: string
           delivery_notes?: string | null
@@ -1541,6 +1621,26 @@ export interface Database {
         }
         Returns: string
       }
+      create_customer_order_atomic: {
+        Args: {
+          p_customer_id?: string | null
+          p_items: Json
+          p_delivery_address: string
+          p_delivery_notes?: string | null
+          p_payment_method?: PaymentMethod
+          p_order_source?: OrderSource
+          p_user_id?: string | null
+        }
+        Returns: Json
+      }
+      cancel_customer_order_atomic: {
+        Args: {
+          p_order_id: string
+          p_reason?: string | null
+          p_user_id?: string | null
+        }
+        Returns: Json
+      }
     }
     Enums: {
       user_role: UserRole
@@ -1568,6 +1668,7 @@ export type Profile = Tables<'profiles'>
 export type Category = Tables<'categories'>
 export type Product = Tables<'products'>
 export type Customer = Tables<'customers'>
+export type CustomerAddress = Tables<'customer_addresses'>
 export type Supplier = Tables<'suppliers'>
 export type Expense = Tables<'expenses'>
 export type Order = Tables<'orders'>
@@ -1588,4 +1689,5 @@ export type SupplierInvoice = Tables<'supplier_invoices'>
 export type SupplierPayment = Tables<'supplier_payments'>
 export type SupplierReturn = Tables<'supplier_returns'>
 export type SupplierReturnItem = Tables<'supplier_return_items'>
+
 

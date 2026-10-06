@@ -9,6 +9,7 @@ import { redirect } from 'next/navigation'
  * 'staff' has operational access
  */
 const ROLE_HIERARCHY: Record<UserRole, number> = {
+  customer: 0,
   staff: 1,
   admin: 2,
   owner: 3,
