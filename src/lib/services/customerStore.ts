@@ -313,11 +313,17 @@ export async function placeStorefrontOrder(params: {
   guestName?: string
   guestPhone?: string
   guestEmail?: string
+  couponCode?: string
+  loyaltyPointsToRedeem?: number
 }): Promise<{
   success: boolean
   orderId: string
   orderNumber: string
   subtotal: number
+  discountAmount: number
+  promotionDiscount: number
+  couponDiscount: number
+  loyaltyDiscount: number
   taxAmount: number
   deliveryFee: number
   totalAmount: number
@@ -360,7 +366,7 @@ export async function placeStorefrontOrder(params: {
     }
   }
 
-  // Call Atomic Database RPC
+  // Call Atomic Database RPC with Phase 8 commercial parameters
   const { data, error } = await supabase.rpc('create_customer_order_atomic', {
     p_customer_id: customer?.id || null,
     p_items: params.items,
@@ -369,6 +375,8 @@ export async function placeStorefrontOrder(params: {
     p_payment_method: params.paymentMethod || 'cash',
     p_order_source: 'website',
     p_user_id: user?.id || null,
+    p_coupon_code: params.couponCode?.trim() || null,
+    p_loyalty_points_to_redeem: params.loyaltyPointsToRedeem || 0,
   })
 
   if (error) {
@@ -382,6 +390,11 @@ export async function placeStorefrontOrder(params: {
     order_number: string
     items_count: number
     subtotal: number
+    discount_amount: number
+    product_promo_discount: number
+    cart_promo_discount: number
+    coupon_discount: number
+    loyalty_discount: number
     tax_amount: number
     delivery_fee: number
     total_amount: number
@@ -397,6 +410,10 @@ export async function placeStorefrontOrder(params: {
     orderId: result.order_id,
     orderNumber: result.order_number,
     subtotal: result.subtotal,
+    discountAmount: result.discount_amount || 0,
+    promotionDiscount: (result.product_promo_discount || 0) + (result.cart_promo_discount || 0),
+    couponDiscount: result.coupon_discount || 0,
+    loyaltyDiscount: result.loyalty_discount || 0,
     taxAmount: result.tax_amount,
     deliveryFee: result.delivery_fee,
     totalAmount: result.total_amount,
@@ -488,3 +505,147 @@ export async function cancelCustomerOrder(orderId: string, reason?: string): Pro
 
   return true
 }
+
+/**
+ * Server-authoritative preview calculation for Cart & Checkout.
+ * Evaluates real-time product base prices, promotional discounts, coupon validation,
+ * loyalty point redemption, tax, and delivery fee.
+ */
+export async function calculateOrderPricingPreview(params: {
+  items: Array<{ product_id: string; quantity: number }>
+  couponCode?: string
+  loyaltyPointsToRedeem?: number
+}): Promise<{
+  subtotal: number
+  promotionDiscount: number
+  couponDiscount: number
+  loyaltyDiscount: number
+  totalDiscount: number
+  taxAmount: number
+  deliveryFee: number
+  grandTotal: number
+  couponResult?: {
+    valid: boolean
+    message: string
+    code: string
+  }
+  loyaltyResult?: {
+    pointsRedeemed: number
+    discountAmount: number
+    balanceAfter: number
+  }
+}> {
+  if (!params.items || params.items.length === 0) {
+    return {
+      subtotal: 0,
+      promotionDiscount: 0,
+      couponDiscount: 0,
+      loyaltyDiscount: 0,
+      totalDiscount: 0,
+      taxAmount: 0,
+      deliveryFee: 10,
+      grandTotal: 10,
+    }
+  }
+
+  const supabase = await createClient()
+  const productIds = params.items.map((i) => i.product_id)
+
+  const { data: products } = await supabase
+    .from('products')
+    .select('id, name, selling_price, promo_price, category_id, is_active, stock_quantity')
+    .in('id', productIds)
+
+  const prodMap = new Map((products || []).map((p) => [p.id, p]))
+
+  let subtotal = 0
+  let productPromoDiscount = 0
+
+  params.items.forEach((item) => {
+    const prod = prodMap.get(item.product_id)
+    if (!prod) return
+
+    const basePrice = Number(prod.selling_price)
+    let unitPrice = basePrice
+
+    if (prod.promo_price !== null && prod.promo_price > 0 && prod.promo_price < basePrice) {
+      unitPrice = Number(prod.promo_price)
+    }
+
+    const lineBase = basePrice * item.quantity
+    const lineEffective = unitPrice * item.quantity
+    subtotal += lineBase
+    productPromoDiscount += (lineBase - lineEffective)
+  })
+
+  let qualifyingSubtotal = Math.max(0, subtotal - productPromoDiscount)
+  let couponDiscount = 0
+  let couponResult: { valid: boolean; message: string; code: string } | undefined
+
+  // Validate coupon preview if provided
+  if (params.couponCode?.trim()) {
+    const { validateCouponPreview } = await import('./coupons')
+    const customer = await getOrCreateCurrentCustomer()
+    const cRes = await validateCouponPreview(
+      params.couponCode.trim(),
+      qualifyingSubtotal,
+      customer?.id
+    )
+
+    couponResult = {
+      valid: cRes.valid,
+      message: cRes.message,
+      code: cRes.code,
+    }
+
+    if (cRes.valid) {
+      couponDiscount = Math.min(qualifyingSubtotal, cRes.discountAmount)
+      qualifyingSubtotal = Math.max(0, qualifyingSubtotal - couponDiscount)
+    }
+  }
+
+  // Validate loyalty redemption preview if requested
+  let loyaltyDiscount = 0
+  let loyaltyResult:
+    | { pointsRedeemed: number; discountAmount: number; balanceAfter: number }
+    | undefined
+
+  if (params.loyaltyPointsToRedeem && params.loyaltyPointsToRedeem > 0) {
+    const { getCurrentCustomerLoyaltyAccount } = await import('./loyalty')
+    const { account } = await getCurrentCustomerLoyaltyAccount()
+    const balance = account?.points_balance || 0
+    const pointsToUse = Math.min(params.loyaltyPointsToRedeem, balance)
+
+    if (pointsToUse >= 100) {
+      const pointValue = pointsToUse * 0.05 // 100 points = 5 AED
+      loyaltyDiscount = Math.min(qualifyingSubtotal, pointValue)
+      qualifyingSubtotal = Math.max(0, qualifyingSubtotal - loyaltyDiscount)
+
+      loyaltyResult = {
+        pointsRedeemed: pointsToUse,
+        discountAmount: Number(loyaltyDiscount.toFixed(2)),
+        balanceAfter: balance - pointsToUse,
+      }
+    }
+  }
+
+  const totalDiscount = Number((productPromoDiscount + couponDiscount + loyaltyDiscount).toFixed(2))
+  const taxRate = 0.05
+  const taxAmount = Number((qualifyingSubtotal * taxRate).toFixed(2))
+  const deliveryFee = (subtotal - productPromoDiscount) >= 100 ? 0 : 10
+  const grandTotal = Number((qualifyingSubtotal + taxAmount + deliveryFee).toFixed(2))
+
+  return {
+    subtotal: Number(subtotal.toFixed(2)),
+    promotionDiscount: Number(productPromoDiscount.toFixed(2)),
+    couponDiscount: Number(couponDiscount.toFixed(2)),
+    loyaltyDiscount: Number(loyaltyDiscount.toFixed(2)),
+    totalDiscount,
+    taxAmount,
+    deliveryFee,
+    grandTotal,
+    couponResult,
+    loyaltyResult,
+  }
+}
+

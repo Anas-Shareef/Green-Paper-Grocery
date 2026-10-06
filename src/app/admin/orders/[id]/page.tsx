@@ -152,12 +152,49 @@ export default async function AdminOrderDetailPage({ params }: PageProps) {
                   )}
                 </span>
               </div>
-              {Number(order.discount_amount) > 0 && (
-                <div className="flex justify-between text-emerald-600 py-2 font-medium">
-                  <span>Store Discount</span>
+              {Number(order.promotion_discount || 0) > 0 && (
+                <div className="flex justify-between text-emerald-600 py-1.5 font-medium">
+                  <span>Promotion Savings</span>
                   <span className="font-mono">
-                    -<CurrencyDisplay amount={order.discount_amount} />
+                    -<CurrencyDisplay amount={order.promotion_discount} />
                   </span>
+                </div>
+              )}
+              {Number(order.coupon_discount || 0) > 0 && (
+                <div className="flex justify-between text-emerald-600 py-1.5 font-medium">
+                  <span>
+                    Coupon Discount {order.coupon_code_snapshot ? `(${order.coupon_code_snapshot})` : ''}
+                  </span>
+                  <span className="font-mono">
+                    -<CurrencyDisplay amount={order.coupon_discount} />
+                  </span>
+                </div>
+              )}
+              {Number(order.loyalty_discount || 0) > 0 && (
+                <div className="flex justify-between text-amber-600 py-1.5 font-medium">
+                  <span>
+                    Loyalty Points Redeemed ({order.loyalty_points_redeemed || 0} pts)
+                  </span>
+                  <span className="font-mono">
+                    -<CurrencyDisplay amount={order.loyalty_discount} />
+                  </span>
+                </div>
+              )}
+              {Number(order.discount_amount || 0) > 0 &&
+                !order.promotion_discount &&
+                !order.coupon_discount &&
+                !order.loyalty_discount && (
+                  <div className="flex justify-between text-emerald-600 py-2 font-medium">
+                    <span>Store Discount</span>
+                    <span className="font-mono">
+                      -<CurrencyDisplay amount={order.discount_amount} />
+                    </span>
+                  </div>
+                )}
+              {Number(order.loyalty_points_earned || 0) > 0 && (
+                <div className="flex justify-between text-emerald-700 dark:text-emerald-400 py-1.5 font-semibold text-[11px] bg-emerald-50 dark:bg-emerald-950/30 px-2 rounded-lg">
+                  <span>Loyalty Points Earned</span>
+                  <span className="font-mono">+{order.loyalty_points_earned} pts</span>
                 </div>
               )}
               <div className="flex justify-between text-base font-black text-foreground pt-3 border-t border-border">

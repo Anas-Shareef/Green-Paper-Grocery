@@ -8,19 +8,22 @@ import {
   getStorefrontCategories,
   getStorefrontFeaturedProducts,
 } from '@/lib/services/storefront'
+import { getActiveStorefrontPromotions } from '@/lib/services/promotions'
 import {
   ArrowRight,
   ShoppingBag,
   Sparkles,
   MapPin,
+  Tag,
 } from 'lucide-react'
 
 export const revalidate = 60 // Revalidate home page every minute
 
 export default async function StorefrontHomePage() {
-  const [categories, featuredProducts] = await Promise.all([
+  const [categories, featuredProducts, activePromotions] = await Promise.all([
     getStorefrontCategories(),
     getStorefrontFeaturedProducts(8),
+    getActiveStorefrontPromotions(),
   ])
 
   return (
@@ -153,6 +156,56 @@ export default async function StorefrontHomePage() {
           </div>
         </div>
       </section>
+
+      {/* Dynamic Active Commercial Promotions (Phase 8) */}
+      {activePromotions.length > 0 && (
+        <section className="py-8 bg-emerald-50/50 dark:bg-emerald-950/20 border-b border-border/60">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center gap-2 mb-4">
+              <Tag className="h-4 w-4 text-emerald-600" />
+              <h2 className="text-xs font-extrabold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                Special Offers & Active Campaigns
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {activePromotions.slice(0, 3).map((promo) => (
+                <div
+                  key={promo.id}
+                  className="rounded-2xl border border-emerald-200/60 dark:border-emerald-800/60 bg-card p-4 shadow-xs flex items-center justify-between gap-3"
+                >
+                  <div className="space-y-1">
+                    <span className="font-bold text-sm text-foreground block">
+                      {promo.name}
+                    </span>
+                    <p className="text-[11px] text-muted-foreground line-clamp-1">
+                      {promo.description || promo.banner_text || 'Save on your fresh grocery basket'}
+                    </p>
+                    {promo.minimum_order_amount > 0 && (
+                      <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold block">
+                        Min. Spend AED {promo.minimum_order_amount}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="px-2.5 py-1 rounded-xl bg-emerald-600 text-white text-xs font-black shadow-xs block">
+                      {promo.discount_type === 'percentage'
+                        ? `${promo.discount_value}% OFF`
+                        : `AED ${promo.discount_value} OFF`}
+                    </span>
+                    <Link
+                      href="/shop"
+                      className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold hover:underline mt-1 inline-block"
+                    >
+                      Shop Now →
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* 2. Categories Section */}
       <section className="py-12 md:py-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

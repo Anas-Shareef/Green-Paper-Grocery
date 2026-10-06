@@ -57,6 +57,19 @@ export type AppPermission =
   // User Management
   | 'users.manage'
   | 'audit.view'
+  // Phase 8: Promotions, Coupons & Loyalty
+  | 'promotions.view'
+  | 'promotions.create'
+  | 'promotions.update'
+  | 'promotions.delete'
+  | 'coupons.view'
+  | 'coupons.create'
+  | 'coupons.update'
+  | 'coupons.disable'
+  | 'loyalty.view'
+  | 'loyalty.adjust'
+  | 'pricing.view'
+  | 'pricing.manage'
 
 /**
  * Static role-to-permission mapping
@@ -110,6 +123,18 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'settings.edit',
     'users.manage',
     'audit.view',
+    'promotions.view',
+    'promotions.create',
+    'promotions.update',
+    'promotions.delete',
+    'coupons.view',
+    'coupons.create',
+    'coupons.update',
+    'coupons.disable',
+    'loyalty.view',
+    'loyalty.adjust',
+    'pricing.view',
+    'pricing.manage',
   ],
   admin: [
     'products.view',
@@ -157,6 +182,18 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'settings.view',
     'settings.edit',
     'audit.view',
+    'promotions.view',
+    'promotions.create',
+    'promotions.update',
+    'promotions.delete',
+    'coupons.view',
+    'coupons.create',
+    'coupons.update',
+    'coupons.disable',
+    'loyalty.view',
+    'loyalty.adjust',
+    'pricing.view',
+    'pricing.manage',
   ],
   staff: [
     'products.view',
@@ -176,6 +213,10 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'suppliers.view',
     'supplier_invoices.view',
     'settings.view',
+    'promotions.view',
+    'coupons.view',
+    'loyalty.view',
+    'pricing.view',
   ],
   customer: [],
 }

@@ -142,6 +142,11 @@ export function ProductCard({ product }: ProductCardProps) {
                 />
               )}
             </div>
+            {hasPromo && (
+              <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold">
+                Save AED {(normalPrice - promoPrice).toFixed(2)}
+              </span>
+            )}
           </div>
 
           {/* Action Button */}

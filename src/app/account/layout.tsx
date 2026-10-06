@@ -9,6 +9,7 @@ import {
   MapPin,
   User,
   LogOut,
+  Gift,
 } from 'lucide-react'
 
 export default async function AccountLayout({
@@ -28,6 +29,7 @@ export default async function AccountLayout({
   const navItems = [
     { label: 'Overview', href: '/account', icon: LayoutDashboard },
     { label: 'My Orders', href: '/account/orders', icon: Package },
+    { label: 'Loyalty & Rewards', href: '/account/loyalty', icon: Gift },
     { label: 'Delivery Addresses', href: '/account/addresses', icon: MapPin },
     { label: 'Profile Details', href: '/account/profile', icon: User },
   ]

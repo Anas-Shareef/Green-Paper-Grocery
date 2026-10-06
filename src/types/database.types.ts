@@ -19,6 +19,31 @@ export type OrderStatus =
   | 'returned'
   | 'failed_delivery'
 
+export type PromotionType =
+  | 'product'
+  | 'category'
+  | 'cart'
+  | 'first_order'
+  | 'buy_x_get_y'
+  | 'minimum_spend'
+
+export type DiscountType = 'percentage' | 'fixed_amount' | 'free_item'
+
+export type PromotionStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'active'
+  | 'paused'
+  | 'expired'
+  | 'archived'
+
+export type LoyaltyTransactionType =
+  | 'earn'
+  | 'redeem'
+  | 'expire'
+  | 'adjustment'
+  | 'reversal'
+
 export type DeliveryStatus =
   | 'unassigned'
   | 'assigned'
@@ -486,6 +511,14 @@ export interface Database {
           payment_status: PaymentStatus
           subtotal: number
           discount_amount: number
+          promotion_discount: number
+          coupon_discount: number
+          loyalty_discount: number
+          coupon_id: string | null
+          coupon_code_snapshot: string | null
+          loyalty_points_redeemed: number
+          loyalty_points_earned: number
+          promotion_snapshots: Json
           tax_amount: number
           delivery_fee: number
           total_amount: number
@@ -519,6 +552,14 @@ export interface Database {
           payment_status?: PaymentStatus
           subtotal?: number
           discount_amount?: number
+          promotion_discount?: number
+          coupon_discount?: number
+          loyalty_discount?: number
+          coupon_id?: string | null
+          coupon_code_snapshot?: string | null
+          loyalty_points_redeemed?: number
+          loyalty_points_earned?: number
+          promotion_snapshots?: Json
           tax_amount?: number
           delivery_fee?: number
           total_amount?: number
@@ -552,6 +593,14 @@ export interface Database {
           payment_status?: PaymentStatus
           subtotal?: number
           discount_amount?: number
+          promotion_discount?: number
+          coupon_discount?: number
+          loyalty_discount?: number
+          coupon_id?: string | null
+          coupon_code_snapshot?: string | null
+          loyalty_points_redeemed?: number
+          loyalty_points_earned?: number
+          promotion_snapshots?: Json
           tax_amount?: number
           delivery_fee?: number
           total_amount?: number
@@ -1714,6 +1763,352 @@ export interface Database {
           },
         ]
       }
+      promotions: {
+        Row: {
+          id: string
+          name: string
+          description: string | null
+          promotion_type: PromotionType
+          discount_type: DiscountType
+          discount_value: number
+          minimum_order_amount: number
+          maximum_discount_amount: number | null
+          buy_quantity: number | null
+          get_quantity: number | null
+          start_at: string
+          end_at: string | null
+          status: PromotionStatus
+          usage_limit: number | null
+          usage_count: number
+          per_customer_limit: number | null
+          is_exclusive: boolean
+          banner_text: string | null
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          description?: string | null
+          promotion_type: PromotionType
+          discount_type: DiscountType
+          discount_value: number
+          minimum_order_amount?: number
+          maximum_discount_amount?: number | null
+          buy_quantity?: number | null
+          get_quantity?: number | null
+          start_at?: string
+          end_at?: string | null
+          status?: PromotionStatus
+          usage_limit?: number | null
+          usage_count?: number
+          per_customer_limit?: number | null
+          is_exclusive?: boolean
+          banner_text?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          description?: string | null
+          promotion_type?: PromotionType
+          discount_type?: DiscountType
+          discount_value?: number
+          minimum_order_amount?: number
+          maximum_discount_amount?: number | null
+          buy_quantity?: number | null
+          get_quantity?: number | null
+          start_at?: string
+          end_at?: string | null
+          status?: PromotionStatus
+          usage_limit?: number | null
+          usage_count?: number
+          per_customer_limit?: number | null
+          is_exclusive?: boolean
+          banner_text?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'promotions_created_by_fkey'
+            columns: ['created_by']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      promotion_products: {
+        Row: {
+          id: string
+          promotion_id: string
+          product_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          promotion_id: string
+          product_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          promotion_id?: string
+          product_id?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'promotion_products_promotion_id_fkey'
+            columns: ['promotion_id']
+            referencedRelation: 'promotions'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'promotion_products_product_id_fkey'
+            columns: ['product_id']
+            referencedRelation: 'products'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      promotion_categories: {
+        Row: {
+          id: string
+          promotion_id: string
+          category_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          promotion_id: string
+          category_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          promotion_id?: string
+          category_id?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'promotion_categories_promotion_id_fkey'
+            columns: ['promotion_id']
+            referencedRelation: 'promotions'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'promotion_categories_category_id_fkey'
+            columns: ['category_id']
+            referencedRelation: 'categories'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      coupons: {
+        Row: {
+          id: string
+          code: string
+          promotion_id: string
+          usage_limit: number | null
+          usage_count: number
+          per_customer_limit: number
+          minimum_order_amount: number | null
+          maximum_discount_amount: number | null
+          start_at: string
+          end_at: string | null
+          is_active: boolean
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          code: string
+          promotion_id: string
+          usage_limit?: number | null
+          usage_count?: number
+          per_customer_limit?: number
+          minimum_order_amount?: number | null
+          maximum_discount_amount?: number | null
+          start_at?: string
+          end_at?: string | null
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          code?: string
+          promotion_id?: string
+          usage_limit?: number | null
+          usage_count?: number
+          per_customer_limit?: number
+          minimum_order_amount?: number | null
+          maximum_discount_amount?: number | null
+          start_at?: string
+          end_at?: string | null
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'coupons_promotion_id_fkey'
+            columns: ['promotion_id']
+            referencedRelation: 'promotions'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'coupons_created_by_fkey'
+            columns: ['created_by']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      coupon_redemptions: {
+        Row: {
+          id: string
+          coupon_id: string
+          customer_id: string
+          order_id: string
+          discount_amount: number
+          redeemed_at: string
+        }
+        Insert: {
+          id?: string
+          coupon_id: string
+          customer_id: string
+          order_id: string
+          discount_amount: number
+          redeemed_at?: string
+        }
+        Update: {
+          id?: string
+          coupon_id?: string
+          customer_id?: string
+          order_id?: string
+          discount_amount?: number
+          redeemed_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'coupon_redemptions_coupon_id_fkey'
+            columns: ['coupon_id']
+            referencedRelation: 'coupons'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'coupon_redemptions_customer_id_fkey'
+            columns: ['customer_id']
+            referencedRelation: 'customers'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'coupon_redemptions_order_id_fkey'
+            columns: ['order_id']
+            referencedRelation: 'orders'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      customer_loyalty_accounts: {
+        Row: {
+          id: string
+          customer_id: string
+          points_balance: number
+          lifetime_points_earned: number
+          lifetime_points_redeemed: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          customer_id: string
+          points_balance?: number
+          lifetime_points_earned?: number
+          lifetime_points_redeemed?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          customer_id?: string
+          points_balance?: number
+          lifetime_points_earned?: number
+          lifetime_points_redeemed?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'customer_loyalty_accounts_customer_id_fkey'
+            columns: ['customer_id']
+            referencedRelation: 'customers'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      loyalty_transactions: {
+        Row: {
+          id: string
+          customer_id: string
+          order_id: string | null
+          transaction_type: LoyaltyTransactionType
+          points: number
+          balance_before: number
+          balance_after: number
+          reason: string | null
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          customer_id: string
+          order_id?: string | null
+          transaction_type: LoyaltyTransactionType
+          points: number
+          balance_before: number
+          balance_after: number
+          reason?: string | null
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          customer_id?: string
+          order_id?: string | null
+          transaction_type?: LoyaltyTransactionType
+          points?: number
+          balance_before?: number
+          balance_after?: number
+          reason?: string | null
+          created_by?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'loyalty_transactions_customer_id_fkey'
+            columns: ['customer_id']
+            referencedRelation: 'customers'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'loyalty_transactions_order_id_fkey'
+            columns: ['order_id']
+            referencedRelation: 'orders'
+            referencedColumns: ['id']
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1842,6 +2237,8 @@ export interface Database {
           p_payment_method?: PaymentMethod
           p_order_source?: OrderSource
           p_user_id?: string | null
+          p_coupon_code?: string | null
+          p_loyalty_points_to_redeem?: number
         }
         Returns: Json
       }
@@ -1906,6 +2303,14 @@ export interface Database {
         }
         Returns: Json
       }
+      adjust_loyalty_points_atomic: {
+        Args: {
+          p_customer_id: string
+          p_points: number
+          p_reason: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       user_role: UserRole
@@ -1916,6 +2321,10 @@ export interface Database {
       inventory_movement_type: InventoryMovementType
       purchase_status: PurchaseStatus
       customer_segment: CustomerSegment
+      promotion_type: PromotionType
+      discount_type: DiscountType
+      promotion_status: PromotionStatus
+      loyalty_transaction_type: LoyaltyTransactionType
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1957,5 +2366,13 @@ export type SupplierReturnItem = Tables<'supplier_return_items'>
 export type OrderStatusHistory = Tables<'order_status_history'>
 export type OrderNote = Tables<'order_notes'>
 export type Delivery = Tables<'deliveries'>
+export type Promotion = Tables<'promotions'>
+export type PromotionProduct = Tables<'promotion_products'>
+export type PromotionCategory = Tables<'promotion_categories'>
+export type Coupon = Tables<'coupons'>
+export type CouponRedemption = Tables<'coupon_redemptions'>
+export type CustomerLoyaltyAccount = Tables<'customer_loyalty_accounts'>
+export type LoyaltyTransaction = Tables<'loyalty_transactions'>
+
 
 

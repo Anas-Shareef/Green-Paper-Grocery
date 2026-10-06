@@ -1,4 +1,5 @@
 import { getDashboardSummary, type DashboardDateRange } from '@/lib/services/dashboard'
+import { createClient } from '@/lib/supabase/server'
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader'
 import { StatCard } from '@/components/admin/StatCard'
 import { CurrencyDisplay } from '@/components/admin/CurrencyDisplay'
@@ -19,6 +20,10 @@ import {
   ShieldCheck,
   Building2,
   AlertTriangle,
+  Tag,
+  Ticket,
+  Gift,
+  Coins,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -33,7 +38,32 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     ? (resolvedParams.range as DashboardDateRange)
     : 'today'
 
-  const data = await getDashboardSummary(range)
+  const [data, supabase] = await Promise.all([
+    getDashboardSummary(range),
+    createClient(),
+  ])
+
+  // Phase 8 Commercial KPIs
+  const [promosRes, couponsRes, loyaltyRes] = await Promise.all([
+    supabase
+      .from('promotions')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active'),
+    supabase
+      .from('coupon_redemptions')
+      .select('id', { count: 'exact', head: true }),
+    supabase
+      .from('customer_loyalty_accounts')
+      .select('points_balance'),
+  ])
+
+  const activePromotionsCount = promosRes.count || 0
+  const couponRedemptionsCount = couponsRes.count || 0
+  const totalOutstandingPoints = (loyaltyRes.data || []).reduce(
+    (acc, row) => acc + (row.points_balance || 0),
+    0
+  )
+  const totalLoyaltyMembers = loyaltyRes.data?.length || 0
 
   return (
     <div className="space-y-8">
@@ -181,7 +211,78 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* 3. Operational Breakdown & Inventory Alerts */}
+      {/* 3. Commercial Promotions, Coupons & Loyalty (Phase 8) */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">
+            Promotions & Customer Loyalty (Phase 8)
+          </h2>
+          <div className="flex items-center gap-3 text-xs">
+            <Link
+              href="/admin/promotions"
+              className="text-emerald-700 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 font-medium"
+            >
+              Promotions <ArrowRight className="h-3 w-3" />
+            </Link>
+            <Link
+              href="/admin/coupons"
+              className="text-emerald-700 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 font-medium"
+            >
+              Coupons <ArrowRight className="h-3 w-3" />
+            </Link>
+            <Link
+              href="/admin/loyalty"
+              className="text-emerald-700 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 font-medium"
+            >
+              Loyalty <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Link href="/admin/promotions" className="block transition-transform hover:-translate-y-0.5">
+            <StatCard
+              title="Active Promotions"
+              value={activePromotionsCount.toString()}
+              subtitle="Live product, category & cart discounts"
+              icon={Tag}
+              iconColor="text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40"
+            />
+          </Link>
+
+          <Link href="/admin/coupons" className="block transition-transform hover:-translate-y-0.5">
+            <StatCard
+              title="Coupon Redemptions"
+              value={couponRedemptionsCount.toString()}
+              subtitle="Total checkout coupons redeemed"
+              icon={Ticket}
+              iconColor="text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40"
+            />
+          </Link>
+
+          <Link href="/admin/loyalty" className="block transition-transform hover:-translate-y-0.5">
+            <StatCard
+              title="Points Outstanding"
+              value={`${totalOutstandingPoints.toLocaleString()} pts`}
+              subtitle={`≈ AED ${(totalOutstandingPoints * 0.05).toFixed(2)} available redemption value`}
+              icon={Coins}
+              iconColor="text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40"
+            />
+          </Link>
+
+          <Link href="/admin/loyalty" className="block transition-transform hover:-translate-y-0.5">
+            <StatCard
+              title="Loyalty Members"
+              value={totalLoyaltyMembers.toString()}
+              subtitle="Enrolled customer accounts earning points"
+              icon={Gift}
+              iconColor="text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40"
+            />
+          </Link>
+        </div>
+      </div>
+
+      {/* 4. Operational Breakdown & Inventory Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Order Fulfillment Status Board */}
         <div className="rounded-xl border border-border bg-card p-6 shadow-xs flex flex-col justify-between">

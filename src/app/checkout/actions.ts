@@ -1,6 +1,9 @@
 'use server'
 
-import { placeStorefrontOrder } from '@/lib/services/customerStore'
+import {
+  placeStorefrontOrder,
+  calculateOrderPricingPreview,
+} from '@/lib/services/customerStore'
 import type { PaymentMethod } from '@/types/database.types'
 
 export interface CheckoutResult {
@@ -18,6 +21,8 @@ export async function processCustomerCheckout(params: {
   guestName?: string
   guestPhone?: string
   guestEmail?: string
+  couponCode?: string
+  loyaltyPointsToRedeem?: number
 }): Promise<CheckoutResult> {
   if (!params.items || params.items.length === 0) {
     return { success: false, error: 'Your cart is empty. Please add items before placing an order.' }
@@ -36,6 +41,8 @@ export async function processCustomerCheckout(params: {
       guestName: params.guestName,
       guestPhone: params.guestPhone,
       guestEmail: params.guestEmail,
+      couponCode: params.couponCode,
+      loyaltyPointsToRedeem: params.loyaltyPointsToRedeem,
     })
 
     return {
@@ -50,5 +57,21 @@ export async function processCustomerCheckout(params: {
       success: false,
       error: errorMessage,
     }
+  }
+}
+
+/**
+ * Server action to preview pricing, validate coupon, and estimate loyalty redemption.
+ */
+export async function previewOrderPricingAction(params: {
+  items: Array<{ product_id: string; quantity: number }>
+  couponCode?: string
+  loyaltyPointsToRedeem?: number
+}) {
+  try {
+    return await calculateOrderPricingPreview(params)
+  } catch (err: unknown) {
+    console.error('Error previewing pricing:', err)
+    return null
   }
 }

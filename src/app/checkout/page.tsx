@@ -6,6 +6,7 @@ import {
   getOrCreateCurrentCustomer,
   getCustomerAddresses,
 } from '@/lib/services/customerStore'
+import { getCurrentCustomerLoyaltyAccount } from '@/lib/services/loyalty'
 import { ArrowLeft, ShieldCheck } from 'lucide-react'
 
 export const metadata = {
@@ -14,9 +15,10 @@ export const metadata = {
 }
 
 export default async function CheckoutPage() {
-  const [customer, savedAddresses] = await Promise.all([
+  const [customer, savedAddresses, loyaltyInfo] = await Promise.all([
     getOrCreateCurrentCustomer(),
     getCustomerAddresses(),
+    getCurrentCustomerLoyaltyAccount(),
   ])
 
   return (
@@ -53,6 +55,7 @@ export default async function CheckoutPage() {
           initialCustomerName={customer?.name || ''}
           initialCustomerPhone={customer?.mobile || ''}
           initialCustomerEmail={customer?.email || ''}
+          loyaltyInfo={loyaltyInfo}
         />
       </div>
     </StoreLayout>

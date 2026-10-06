@@ -239,9 +239,42 @@ export default async function CustomerOrderDetailPage({ params }: PageProps) {
         {/* Financial Summary */}
         <div className="rounded-2xl bg-muted/30 border border-border p-5 space-y-2.5 text-xs max-w-sm ml-auto">
           <div className="flex items-center justify-between text-muted-foreground">
-            <span>Subtotal</span>
+            <span>Merchandise Subtotal</span>
             <CurrencyDisplay amount={order.subtotal} className="font-semibold text-foreground" />
           </div>
+
+          {Number(order.promotion_discount || 0) > 0 && (
+            <div className="flex items-center justify-between text-emerald-600 font-medium">
+              <span>Promotion Discount</span>
+              <span>-<CurrencyDisplay amount={order.promotion_discount} /></span>
+            </div>
+          )}
+
+          {Number(order.coupon_discount || 0) > 0 && (
+            <div className="flex items-center justify-between text-emerald-600 font-medium">
+              <span>
+                Coupon {order.coupon_code_snapshot ? `(${order.coupon_code_snapshot})` : ''}
+              </span>
+              <span>-<CurrencyDisplay amount={order.coupon_discount} /></span>
+            </div>
+          )}
+
+          {Number(order.loyalty_discount || 0) > 0 && (
+            <div className="flex items-center justify-between text-amber-600 font-medium">
+              <span>Loyalty Points Redeemed ({order.loyalty_points_redeemed || 0} pts)</span>
+              <span>-<CurrencyDisplay amount={order.loyalty_discount} /></span>
+            </div>
+          )}
+
+          {Number(order.discount_amount || 0) > 0 &&
+            !order.promotion_discount &&
+            !order.coupon_discount &&
+            !order.loyalty_discount && (
+              <div className="flex items-center justify-between text-emerald-600 font-medium">
+                <span>Total Discount</span>
+                <span>-<CurrencyDisplay amount={order.discount_amount} /></span>
+              </div>
+            )}
 
           <div className="flex items-center justify-between text-muted-foreground">
             <span>5% UAE VAT</span>
@@ -256,6 +289,13 @@ export default async function CustomerOrderDetailPage({ params }: PageProps) {
               <CurrencyDisplay amount={order.delivery_fee} className="font-semibold text-foreground" />
             )}
           </div>
+
+          {Number(order.loyalty_points_earned || 0) > 0 && (
+            <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1.5 rounded-xl border border-emerald-200/50">
+              <span>Points Earned on this Order</span>
+              <span className="font-mono">+{order.loyalty_points_earned} pts</span>
+            </div>
+          )}
 
           <div className="h-px bg-border my-1" />
 
