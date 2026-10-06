@@ -23,6 +23,8 @@ export type PaymentMethod =
   | 'card_online'
   | 'credit'
   | 'other'
+  | 'bank_transfer'
+  | 'cheque'
 export type PaymentStatus =
   | 'pending'
   | 'paid'
@@ -38,7 +40,13 @@ export type InventoryMovementType =
   | 'expired'
   | 'adjustment'
   | 'opening_stock'
-export type PurchaseStatus = 'draft' | 'ordered' | 'received' | 'cancelled'
+export type PurchaseStatus =
+  | 'draft'
+  | 'ordered'
+  | 'partially_received'
+  | 'received'
+  | 'cancelled'
+  | 'closed'
 export type CustomerSegment =
   | 'new'
   | 'regular'
@@ -276,40 +284,58 @@ export interface Database {
       suppliers: {
         Row: {
           id: string
+          supplier_code: string | null
           name: string
           contact_person: string | null
           phone: string | null
           whatsapp: string | null
           email: string | null
           address: string | null
+          tax_identifier: string | null
+          payment_terms: string
+          credit_limit: number
           notes: string | null
           is_active: boolean
+          created_by: string | null
+          updated_by: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
+          supplier_code?: string | null
           name: string
           contact_person?: string | null
           phone?: string | null
           whatsapp?: string | null
           email?: string | null
           address?: string | null
+          tax_identifier?: string | null
+          payment_terms?: string
+          credit_limit?: number
           notes?: string | null
           is_active?: boolean
+          created_by?: string | null
+          updated_by?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
+          supplier_code?: string | null
           name?: string
           contact_person?: string | null
           phone?: string | null
           whatsapp?: string | null
           email?: string | null
           address?: string | null
+          tax_identifier?: string | null
+          payment_terms?: string
+          credit_limit?: number
           notes?: string | null
           is_active?: boolean
+          created_by?: string | null
+          updated_by?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -486,45 +512,69 @@ export interface Database {
       purchases: {
         Row: {
           id: string
+          purchase_number: string
           supplier_id: string
           invoice_number: string
           purchase_date: string
+          expected_delivery_date: string | null
           subtotal: number
           supplier_discount: number
+          tax_amount: number
+          additional_charges: number
           total_amount: number
           attachment_url: string | null
           notes: string | null
           status: PurchaseStatus
+          invoice_status: 'unbilled' | 'partially_billed' | 'billed'
+          payment_status: PaymentStatus
+          ordered_at: string | null
+          ordered_by: string | null
           created_by: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
+          purchase_number?: string
           supplier_id: string
-          invoice_number: string
+          invoice_number?: string
           purchase_date?: string
+          expected_delivery_date?: string | null
           subtotal?: number
           supplier_discount?: number
+          tax_amount?: number
+          additional_charges?: number
           total_amount?: number
           attachment_url?: string | null
           notes?: string | null
           status?: PurchaseStatus
+          invoice_status?: 'unbilled' | 'partially_billed' | 'billed'
+          payment_status?: PaymentStatus
+          ordered_at?: string | null
+          ordered_by?: string | null
           created_by?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
+          purchase_number?: string
           supplier_id?: string
           invoice_number?: string
           purchase_date?: string
+          expected_delivery_date?: string | null
           subtotal?: number
           supplier_discount?: number
+          tax_amount?: number
+          additional_charges?: number
           total_amount?: number
           attachment_url?: string | null
           notes?: string | null
           status?: PurchaseStatus
+          invoice_status?: 'unbilled' | 'partially_billed' | 'billed'
+          payment_status?: PaymentStatus
+          ordered_at?: string | null
+          ordered_by?: string | null
           created_by?: string | null
           created_at?: string
           updated_at?: string
@@ -542,6 +592,12 @@ export interface Database {
             referencedRelation: 'profiles'
             referencedColumns: ['id']
           },
+          {
+            foreignKeyName: 'purchases_ordered_by_fkey'
+            columns: ['ordered_by']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
         ]
       }
       purchase_items: {
@@ -550,10 +606,13 @@ export interface Database {
           purchase_id: string
           product_id: string
           quantity: number
+          received_quantity: number
           purchase_price: number
           discount_amount: number
+          tax_amount: number
           final_unit_cost: number
           total_cost: number
+          notes: string | null
           created_at: string
         }
         Insert: {
@@ -561,10 +620,13 @@ export interface Database {
           purchase_id: string
           product_id: string
           quantity: number
+          received_quantity?: number
           purchase_price: number
           discount_amount?: number
+          tax_amount?: number
           final_unit_cost: number
           total_cost: number
+          notes?: string | null
           created_at?: string
         }
         Update: {
@@ -572,10 +634,13 @@ export interface Database {
           purchase_id?: string
           product_id?: string
           quantity?: number
+          received_quantity?: number
           purchase_price?: number
           discount_amount?: number
+          tax_amount?: number
           final_unit_cost?: number
           total_cost?: number
+          notes?: string | null
           created_at?: string
         }
         Relationships: [
@@ -964,6 +1029,399 @@ export interface Database {
           },
         ]
       }
+      goods_received_notes: {
+        Row: {
+          id: string
+          purchase_id: string
+          supplier_id: string
+          grn_number: string
+          delivery_note_number: string | null
+          status: 'completed' | 'cancelled'
+          notes: string | null
+          received_at: string
+          received_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          purchase_id: string
+          supplier_id: string
+          grn_number: string
+          delivery_note_number?: string | null
+          status?: 'completed' | 'cancelled'
+          notes?: string | null
+          received_at?: string
+          received_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          purchase_id?: string
+          supplier_id?: string
+          grn_number?: string
+          delivery_note_number?: string | null
+          status?: 'completed' | 'cancelled'
+          notes?: string | null
+          received_at?: string
+          received_by?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'goods_received_notes_purchase_id_fkey'
+            columns: ['purchase_id']
+            referencedRelation: 'purchases'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'goods_received_notes_supplier_id_fkey'
+            columns: ['supplier_id']
+            referencedRelation: 'suppliers'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'goods_received_notes_received_by_fkey'
+            columns: ['received_by']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      goods_received_items: {
+        Row: {
+          id: string
+          grn_id: string
+          purchase_item_id: string
+          product_id: string
+          ordered_quantity: number
+          previously_received_quantity: number
+          received_quantity: number
+          accepted_quantity: number
+          rejected_quantity: number
+          unit_cost: number
+          total_cost: number
+          batch_number: string | null
+          expiry_date: string | null
+          notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          grn_id: string
+          purchase_item_id: string
+          product_id: string
+          ordered_quantity: number
+          previously_received_quantity?: number
+          received_quantity: number
+          accepted_quantity: number
+          rejected_quantity?: number
+          unit_cost: number
+          total_cost: number
+          batch_number?: string | null
+          expiry_date?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          grn_id?: string
+          purchase_item_id?: string
+          product_id?: string
+          ordered_quantity?: number
+          previously_received_quantity?: number
+          received_quantity?: number
+          accepted_quantity?: number
+          rejected_quantity?: number
+          unit_cost?: number
+          total_cost?: number
+          batch_number?: string | null
+          expiry_date?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'goods_received_items_grn_id_fkey'
+            columns: ['grn_id']
+            referencedRelation: 'goods_received_notes'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'goods_received_items_purchase_item_id_fkey'
+            columns: ['purchase_item_id']
+            referencedRelation: 'purchase_items'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'goods_received_items_product_id_fkey'
+            columns: ['product_id']
+            referencedRelation: 'products'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      supplier_invoices: {
+        Row: {
+          id: string
+          supplier_id: string
+          purchase_id: string | null
+          invoice_number: string
+          invoice_date: string
+          due_date: string
+          subtotal: number
+          discount_amount: number
+          tax_amount: number
+          total_amount: number
+          paid_amount: number
+          outstanding_amount: number
+          status: 'unpaid' | 'partially_paid' | 'paid' | 'overdue' | 'cancelled'
+          attachment_url: string | null
+          notes: string | null
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          supplier_id: string
+          purchase_id?: string | null
+          invoice_number: string
+          invoice_date?: string
+          due_date: string
+          subtotal?: number
+          discount_amount?: number
+          tax_amount?: number
+          total_amount?: number
+          paid_amount?: number
+          outstanding_amount?: number
+          status?: 'unpaid' | 'partially_paid' | 'paid' | 'overdue' | 'cancelled'
+          attachment_url?: string | null
+          notes?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          supplier_id?: string
+          purchase_id?: string | null
+          invoice_number?: string
+          invoice_date?: string
+          due_date?: string
+          subtotal?: number
+          discount_amount?: number
+          tax_amount?: number
+          total_amount?: number
+          paid_amount?: number
+          outstanding_amount?: number
+          status?: 'unpaid' | 'partially_paid' | 'paid' | 'overdue' | 'cancelled'
+          attachment_url?: string | null
+          notes?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'supplier_invoices_supplier_id_fkey'
+            columns: ['supplier_id']
+            referencedRelation: 'suppliers'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'supplier_invoices_purchase_id_fkey'
+            columns: ['purchase_id']
+            referencedRelation: 'purchases'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'supplier_invoices_created_by_fkey'
+            columns: ['created_by']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      supplier_payments: {
+        Row: {
+          id: string
+          payment_number: string
+          supplier_id: string
+          invoice_id: string | null
+          amount: number
+          payment_date: string
+          payment_method: PaymentMethod
+          reference: string | null
+          notes: string | null
+          recorded_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          payment_number?: string
+          supplier_id: string
+          invoice_id?: string | null
+          amount: number
+          payment_date?: string
+          payment_method?: PaymentMethod
+          reference?: string | null
+          notes?: string | null
+          recorded_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          payment_number?: string
+          supplier_id?: string
+          invoice_id?: string | null
+          amount?: number
+          payment_date?: string
+          payment_method?: PaymentMethod
+          reference?: string | null
+          notes?: string | null
+          recorded_by?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'supplier_payments_supplier_id_fkey'
+            columns: ['supplier_id']
+            referencedRelation: 'suppliers'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'supplier_payments_invoice_id_fkey'
+            columns: ['invoice_id']
+            referencedRelation: 'supplier_invoices'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'supplier_payments_recorded_by_fkey'
+            columns: ['recorded_by']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      supplier_returns: {
+        Row: {
+          id: string
+          return_number: string
+          supplier_id: string
+          purchase_id: string
+          status: 'draft' | 'requested' | 'approved' | 'completed' | 'rejected' | 'cancelled'
+          total_amount: number
+          reason: string
+          notes: string | null
+          requested_by: string | null
+          approved_by: string | null
+          completed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          return_number?: string
+          supplier_id: string
+          purchase_id: string
+          status?: 'draft' | 'requested' | 'approved' | 'completed' | 'rejected' | 'cancelled'
+          total_amount?: number
+          reason: string
+          notes?: string | null
+          requested_by?: string | null
+          approved_by?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          return_number?: string
+          supplier_id?: string
+          purchase_id?: string
+          status?: 'draft' | 'requested' | 'approved' | 'completed' | 'rejected' | 'cancelled'
+          total_amount?: number
+          reason?: string
+          notes?: string | null
+          requested_by?: string | null
+          approved_by?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'supplier_returns_supplier_id_fkey'
+            columns: ['supplier_id']
+            referencedRelation: 'suppliers'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'supplier_returns_purchase_id_fkey'
+            columns: ['purchase_id']
+            referencedRelation: 'purchases'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'supplier_returns_requested_by_fkey'
+            columns: ['requested_by']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'supplier_returns_approved_by_fkey'
+            columns: ['approved_by']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      supplier_return_items: {
+        Row: {
+          id: string
+          return_id: string
+          product_id: string
+          quantity: number
+          unit_cost: number
+          total_cost: number
+          reason: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          return_id: string
+          product_id: string
+          quantity: number
+          unit_cost: number
+          total_cost: number
+          reason?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          return_id?: string
+          product_id?: string
+          quantity?: number
+          unit_cost?: number
+          total_cost?: number
+          reason?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'supplier_return_items_return_id_fkey'
+            columns: ['return_id']
+            referencedRelation: 'supplier_returns'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'supplier_return_items_product_id_fkey'
+            columns: ['product_id']
+            referencedRelation: 'products'
+            referencedColumns: ['id']
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1046,6 +1504,43 @@ export interface Database {
         }
         Returns: string
       }
+      receive_purchase_order_atomic: {
+        Args: {
+          p_purchase_id: string
+          p_items: Json
+          p_delivery_note?: string | null
+          p_notes?: string | null
+          p_user_id?: string | null
+        }
+        Returns: Json
+      }
+      record_supplier_payment_atomic: {
+        Args: {
+          p_supplier_id: string
+          p_invoice_id?: string | null
+          p_amount: number
+          p_payment_method: PaymentMethod
+          p_payment_date?: string | null
+          p_reference?: string | null
+          p_notes?: string | null
+          p_user_id?: string | null
+        }
+        Returns: Json
+      }
+      complete_supplier_return_atomic: {
+        Args: {
+          p_return_id: string
+          p_user_id?: string | null
+        }
+        Returns: Json
+      }
+      generate_document_code: {
+        Args: {
+          p_prefix: string
+          p_seq: string
+        }
+        Returns: string
+      }
     }
     Enums: {
       user_role: UserRole
@@ -1087,4 +1582,10 @@ export type ProductPriceHistory = Tables<'product_price_history'>
 export type InventoryCount = Tables<'inventory_counts'>
 export type InventoryCountItem = Tables<'inventory_count_items'>
 export type ProductBatch = Tables<'product_batches'>
+export type GoodsReceivedNote = Tables<'goods_received_notes'>
+export type GoodsReceivedItem = Tables<'goods_received_items'>
+export type SupplierInvoice = Tables<'supplier_invoices'>
+export type SupplierPayment = Tables<'supplier_payments'>
+export type SupplierReturn = Tables<'supplier_returns'>
+export type SupplierReturnItem = Tables<'supplier_return_items'>
 

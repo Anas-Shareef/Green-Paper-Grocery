@@ -17,6 +17,8 @@ import {
   Truck,
   ArrowRight,
   ShieldCheck,
+  Building2,
+  AlertTriangle,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -124,7 +126,62 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* 2. Operational Breakdown & Inventory Alerts */}
+      {/* 2. Purchasing & Supplier Operations (Phase 5) */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">
+            Purchasing & Supplier Operations
+          </h2>
+          <Link
+            href="/admin/purchases"
+            className="text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:underline inline-flex items-center gap-1"
+          >
+            Manage Purchases <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <Link href="/admin/purchases?status=ordered" className="block transition-transform hover:-translate-y-0.5">
+            <StatCard
+              title="Pending Receivings / GRN"
+              value={data.purchasingSummary.pendingReceivingsCount.toString()}
+              subtitle="PO shipments awaiting receiving & stock-in"
+              icon={Truck}
+              iconColor="text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40"
+            />
+          </Link>
+
+          <Link href="/admin/suppliers" className="block transition-transform hover:-translate-y-0.5">
+            <StatCard
+              title="Outstanding Supplier Payables"
+              value={<CurrencyDisplay amount={data.purchasingSummary.outstandingPayables} />}
+              subtitle="Unpaid & partially paid supplier invoices"
+              icon={Building2}
+              iconColor="text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40"
+            />
+          </Link>
+
+          <Link href="/admin/purchases" className="block transition-transform hover:-translate-y-0.5">
+            <StatCard
+              title="Overdue Supplier Invoices"
+              value={data.purchasingSummary.overdueInvoicesCount.toString()}
+              subtitle={
+                data.purchasingSummary.overdueInvoicesCount > 0
+                  ? 'Invoices past due date requiring settlement'
+                  : 'All supplier invoices current'
+              }
+              icon={AlertTriangle}
+              iconColor={
+                data.purchasingSummary.overdueInvoicesCount > 0
+                  ? 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40'
+                  : 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40'
+              }
+            />
+          </Link>
+        </div>
+      </div>
+
+      {/* 3. Operational Breakdown & Inventory Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Order Fulfillment Status Board */}
         <div className="rounded-xl border border-border bg-card p-6 shadow-xs flex flex-col justify-between">

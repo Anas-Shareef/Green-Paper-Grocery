@@ -24,8 +24,20 @@ export type AppPermission =
   | 'purchases.view'
   | 'purchases.create'
   | 'purchases.edit'
+  | 'purchases.order'
+  | 'purchases.cancel'
+  | 'purchases.receive'
+  | 'purchases.return'
   | 'suppliers.view'
+  | 'suppliers.create'
   | 'suppliers.edit'
+  | 'suppliers.archive'
+  | 'supplier_invoices.view'
+  | 'supplier_invoices.create'
+  | 'supplier_invoices.edit'
+  | 'supplier_payments.view'
+  | 'supplier_payments.create'
+  | 'purchase_reports.view'
   // Expenses & Finance
   | 'expenses.view'
   | 'expenses.create'
@@ -62,8 +74,20 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'purchases.view',
     'purchases.create',
     'purchases.edit',
+    'purchases.order',
+    'purchases.cancel',
+    'purchases.receive',
+    'purchases.return',
     'suppliers.view',
+    'suppliers.create',
     'suppliers.edit',
+    'suppliers.archive',
+    'supplier_invoices.view',
+    'supplier_invoices.create',
+    'supplier_invoices.edit',
+    'supplier_payments.view',
+    'supplier_payments.create',
+    'purchase_reports.view',
     'expenses.view',
     'expenses.create',
     'expenses.edit',
@@ -91,8 +115,20 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'purchases.view',
     'purchases.create',
     'purchases.edit',
+    'purchases.order',
+    'purchases.cancel',
+    'purchases.receive',
+    'purchases.return',
     'suppliers.view',
+    'suppliers.create',
     'suppliers.edit',
+    'suppliers.archive',
+    'supplier_invoices.view',
+    'supplier_invoices.create',
+    'supplier_invoices.edit',
+    'supplier_payments.view',
+    'supplier_payments.create',
+    'purchase_reports.view',
     'expenses.view',
     'expenses.create',
     'expenses.edit',
@@ -111,7 +147,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'customers.view',
     'customers.edit',
     'purchases.view',
+    'purchases.receive',
     'suppliers.view',
+    'supplier_invoices.view',
     'settings.view',
   ],
 }

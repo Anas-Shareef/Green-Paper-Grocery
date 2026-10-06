@@ -81,13 +81,11 @@ const NAV_SECTIONS: NavSection[] = [
         title: 'Purchases',
         href: '/admin/purchases',
         icon: Truck,
-        badge: 'Phase 5',
       },
       {
         title: 'Suppliers',
         href: '/admin/suppliers',
         icon: Building2,
-        badge: 'Phase 5',
       },
     ],
   },

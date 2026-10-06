@@ -47,6 +47,12 @@ export interface DashboardMetrics {
     returningCustomersCount: number
     inactiveCustomersCount: number
   }
+  purchasingSummary: {
+    pendingReceivingsCount: number
+    outstandingPayables: number
+    overdueInvoicesCount: number
+    purchasesInRangeTotal: number
+  }
 }
 
 /**
@@ -213,6 +219,43 @@ export async function getDashboardSummary(
     .select('*', { count: 'exact', head: true })
     .or(`last_order_at.lt.${inactiveCutoff},and(last_order_at.is.null,created_at.lt.${inactiveCutoff})`)
 
+  // 6. Purchasing Metrics (Phase 5)
+  // A. Pending receivings count
+  const { count: pendingReceivingsCount } = await supabase
+    .from('purchases')
+    .select('*', { count: 'exact', head: true })
+    .in('status', ['ordered', 'partially_received'])
+
+  // B. Supplier payables & overdue invoices
+  const todayStr = new Date().toISOString().split('T')[0]
+  const { data: openInvoices } = await supabase
+    .from('supplier_invoices')
+    .select('outstanding_amount, due_date, status')
+    .in('status', ['unpaid', 'partially_paid', 'overdue'])
+
+  let outstandingPayables = 0
+  let overdueInvoicesCount = 0
+  for (const inv of openInvoices || []) {
+    outstandingPayables += Number(inv.outstanding_amount) || 0
+    if (inv.status === 'overdue' || (inv.due_date < todayStr && Number(inv.outstanding_amount) > 0)) {
+      overdueInvoicesCount += 1
+    }
+  }
+
+  // C. Total purchases in date range
+  const { data: rangePurchases } = await supabase
+    .from('purchases')
+    .select('total_amount, status')
+    .gte('purchase_date', startDate)
+    .lt('purchase_date', endExclusive)
+
+  let purchasesInRangeTotal = 0
+  for (const p of rangePurchases || []) {
+    if (p.status !== 'cancelled') {
+      purchasesInRangeTotal += Number(p.total_amount) || 0
+    }
+  }
+
   return {
     dateRange: range,
     rangeLabel: label,
@@ -237,6 +280,12 @@ export async function getDashboardSummary(
       newCustomersInRange: newCustomersCount ?? 0,
       returningCustomersCount: returningCount ?? 0,
       inactiveCustomersCount: inactiveCount ?? 0,
+    },
+    purchasingSummary: {
+      pendingReceivingsCount: pendingReceivingsCount ?? 0,
+      outstandingPayables: Math.round(outstandingPayables * 100) / 100,
+      overdueInvoicesCount,
+      purchasesInRangeTotal: Math.round(purchasesInRangeTotal * 100) / 100,
     },
   }
 }
