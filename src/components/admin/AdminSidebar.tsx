@@ -52,13 +52,17 @@ const NAV_SECTIONS: NavSection[] = [
         title: 'Orders',
         href: '/admin/orders',
         icon: ShoppingBag,
-        badge: 'Phase 6',
+      },
+      {
+        title: 'Deliveries',
+        href: '/admin/deliveries',
+        icon: Truck,
+        badge: 'Phase 7',
       },
       {
         title: 'Customers',
         href: '/admin/customers',
         icon: Users,
-        badge: 'Phase 6',
       },
       {
         title: 'Products',

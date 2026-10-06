@@ -12,11 +12,18 @@ export type AppPermission =
   | 'inventory.adjust'
   | 'inventory.count'
   | 'inventory.manage'
-  // Orders
+  // Orders & Fulfillment
   | 'orders.view'
   | 'orders.create'
   | 'orders.update'
+  | 'orders.confirm'
+  | 'orders.prepare'
+  | 'orders.fulfill'
+  | 'orders.assign_delivery'
+  | 'orders.deliver'
   | 'orders.cancel'
+  | 'orders.payment'
+  | 'orders.refund'
   // Customers
   | 'customers.view'
   | 'customers.edit'
@@ -68,7 +75,14 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'orders.view',
     'orders.create',
     'orders.update',
+    'orders.confirm',
+    'orders.prepare',
+    'orders.fulfill',
+    'orders.assign_delivery',
+    'orders.deliver',
     'orders.cancel',
+    'orders.payment',
+    'orders.refund',
     'customers.view',
     'customers.edit',
     'purchases.view',
@@ -109,7 +123,14 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'orders.view',
     'orders.create',
     'orders.update',
+    'orders.confirm',
+    'orders.prepare',
+    'orders.fulfill',
+    'orders.assign_delivery',
+    'orders.deliver',
     'orders.cancel',
+    'orders.payment',
+    'orders.refund',
     'customers.view',
     'customers.edit',
     'purchases.view',
@@ -144,6 +165,10 @@ export const ROLE_PERMISSIONS: Record<UserRole, AppPermission[]> = {
     'orders.view',
     'orders.create',
     'orders.update',
+    'orders.confirm',
+    'orders.prepare',
+    'orders.fulfill',
+    'orders.deliver',
     'customers.view',
     'customers.edit',
     'purchases.view',

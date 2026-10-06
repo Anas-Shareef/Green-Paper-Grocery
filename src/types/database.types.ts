@@ -17,6 +17,20 @@ export type OrderStatus =
   | 'delivered'
   | 'cancelled'
   | 'returned'
+  | 'failed_delivery'
+
+export type DeliveryStatus =
+  | 'unassigned'
+  | 'assigned'
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'failed'
+
+export type ItemFulfillmentStatus =
+  | 'pending'
+  | 'picked'
+  | 'packed'
+  | 'unavailable'
 export type PaymentMethod =
   | 'cash'
   | 'card_on_delivery'
@@ -477,6 +491,19 @@ export interface Database {
           total_amount: number
           delivery_address: string
           delivery_notes: string | null
+          recipient_name: string | null
+          recipient_phone: string | null
+          internal_notes: string | null
+          assigned_driver_id: string | null
+          confirmed_at: string | null
+          preparing_at: string | null
+          ready_at: string | null
+          out_for_delivery_at: string | null
+          delivered_at: string | null
+          cancelled_at: string | null
+          cancellation_reason: string | null
+          failed_at: string | null
+          failure_reason: string | null
           order_date: string
           created_by: string | null
           created_at: string
@@ -497,6 +524,19 @@ export interface Database {
           total_amount?: number
           delivery_address: string
           delivery_notes?: string | null
+          recipient_name?: string | null
+          recipient_phone?: string | null
+          internal_notes?: string | null
+          assigned_driver_id?: string | null
+          confirmed_at?: string | null
+          preparing_at?: string | null
+          ready_at?: string | null
+          out_for_delivery_at?: string | null
+          delivered_at?: string | null
+          cancelled_at?: string | null
+          cancellation_reason?: string | null
+          failed_at?: string | null
+          failure_reason?: string | null
           order_date?: string
           created_by?: string | null
           created_at?: string
@@ -517,6 +557,19 @@ export interface Database {
           total_amount?: number
           delivery_address?: string
           delivery_notes?: string | null
+          recipient_name?: string | null
+          recipient_phone?: string | null
+          internal_notes?: string | null
+          assigned_driver_id?: string | null
+          confirmed_at?: string | null
+          preparing_at?: string | null
+          ready_at?: string | null
+          out_for_delivery_at?: string | null
+          delivered_at?: string | null
+          cancelled_at?: string | null
+          cancellation_reason?: string | null
+          failed_at?: string | null
+          failure_reason?: string | null
           order_date?: string
           created_by?: string | null
           created_at?: string
@@ -548,6 +601,8 @@ export interface Database {
           purchase_cost_at_sale: number
           discount_amount: number
           total_amount: number
+          fulfillment_status: ItemFulfillmentStatus
+          prepared_quantity: number
           created_at: string
         }
         Insert: {
@@ -560,6 +615,8 @@ export interface Database {
           purchase_cost_at_sale?: number
           discount_amount?: number
           total_amount: number
+          fulfillment_status?: ItemFulfillmentStatus
+          prepared_quantity?: number
           created_at?: string
         }
         Update: {
@@ -572,6 +629,8 @@ export interface Database {
           purchase_cost_at_sale?: number
           discount_amount?: number
           total_amount?: number
+          fulfillment_status?: ItemFulfillmentStatus
+          prepared_quantity?: number
           created_at?: string
         }
         Relationships: [
@@ -1502,6 +1561,159 @@ export interface Database {
           },
         ]
       }
+      order_status_history: {
+        Row: {
+          id: string
+          order_id: string
+          from_status: OrderStatus | null
+          to_status: OrderStatus
+          changed_by: string | null
+          reason: string | null
+          notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          order_id: string
+          from_status?: OrderStatus | null
+          to_status: OrderStatus
+          changed_by?: string | null
+          reason?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          order_id?: string
+          from_status?: OrderStatus | null
+          to_status?: OrderStatus
+          changed_by?: string | null
+          reason?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'order_status_history_order_id_fkey'
+            columns: ['order_id']
+            referencedRelation: 'orders'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'order_status_history_changed_by_fkey'
+            columns: ['changed_by']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      order_notes: {
+        Row: {
+          id: string
+          order_id: string
+          author_id: string | null
+          note: string
+          visibility: 'internal' | 'customer'
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          order_id: string
+          author_id?: string | null
+          note: string
+          visibility?: 'internal' | 'customer'
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          order_id?: string
+          author_id?: string | null
+          note?: string
+          visibility?: 'internal' | 'customer'
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'order_notes_order_id_fkey'
+            columns: ['order_id']
+            referencedRelation: 'orders'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'order_notes_author_id_fkey'
+            columns: ['author_id']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      deliveries: {
+        Row: {
+          id: string
+          order_id: string
+          assigned_to: string | null
+          status: DeliveryStatus
+          delivery_address: string
+          recipient_name: string | null
+          recipient_phone: string | null
+          delivery_notes: string | null
+          assigned_at: string | null
+          picked_up_at: string | null
+          delivered_at: string | null
+          failed_at: string | null
+          failure_reason: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          order_id: string
+          assigned_to?: string | null
+          status?: DeliveryStatus
+          delivery_address: string
+          recipient_name?: string | null
+          recipient_phone?: string | null
+          delivery_notes?: string | null
+          assigned_at?: string | null
+          picked_up_at?: string | null
+          delivered_at?: string | null
+          failed_at?: string | null
+          failure_reason?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          order_id?: string
+          assigned_to?: string | null
+          status?: DeliveryStatus
+          delivery_address?: string
+          recipient_name?: string | null
+          recipient_phone?: string | null
+          delivery_notes?: string | null
+          assigned_at?: string | null
+          picked_up_at?: string | null
+          delivered_at?: string | null
+          failed_at?: string | null
+          failure_reason?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'deliveries_order_id_fkey'
+            columns: ['order_id']
+            referencedRelation: 'orders'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'deliveries_assigned_to_fkey'
+            columns: ['assigned_to']
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1641,6 +1853,59 @@ export interface Database {
         }
         Returns: Json
       }
+      transition_order_status_atomic: {
+        Args: {
+          p_order_id: string
+          p_next_status: OrderStatus
+          p_reason?: string | null
+          p_notes?: string | null
+          p_driver_id?: string | null
+          p_failure_reason?: string | null
+        }
+        Returns: Json
+      }
+      assign_order_delivery_atomic: {
+        Args: {
+          p_order_id: string
+          p_driver_id: string
+          p_notes?: string | null
+        }
+        Returns: Json
+      }
+      update_item_fulfillment_atomic: {
+        Args: {
+          p_order_id: string
+          p_item_id: string
+          p_status: string
+          p_prepared_qty?: number
+        }
+        Returns: Json
+      }
+      collect_order_payment_atomic: {
+        Args: {
+          p_order_id: string
+          p_amount: number
+          p_payment_method: PaymentMethod
+          p_reference?: string | null
+        }
+        Returns: Json
+      }
+      cancel_order_staff_atomic: {
+        Args: {
+          p_order_id: string
+          p_reason: string
+          p_restock?: boolean
+        }
+        Returns: Json
+      }
+      add_order_note_atomic: {
+        Args: {
+          p_order_id: string
+          p_note: string
+          p_visibility?: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       user_role: UserRole
@@ -1689,5 +1954,8 @@ export type SupplierInvoice = Tables<'supplier_invoices'>
 export type SupplierPayment = Tables<'supplier_payments'>
 export type SupplierReturn = Tables<'supplier_returns'>
 export type SupplierReturnItem = Tables<'supplier_return_items'>
+export type OrderStatusHistory = Tables<'order_status_history'>
+export type OrderNote = Tables<'order_notes'>
+export type Delivery = Tables<'deliveries'>
 
 
