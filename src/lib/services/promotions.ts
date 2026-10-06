@@ -277,24 +277,40 @@ export async function updatePromotion(
  * Retrieves active storefront banners and campaigns for display.
  */
 export async function getActiveStorefrontPromotions(): Promise<Promotion[]> {
-  const supabase = await createClient()
-  const now = new Date().toISOString()
-
-  const { data, error } = await supabase
-    .from('promotions')
-    .select('*')
-    .eq('status', 'active')
-    .lte('start_at', now)
-    .or(`end_at.is.null,end_at.gt.${now}`)
-    .order('created_at', { ascending: false })
-    .limit(10)
-
-  if (error) {
-    console.error('Error fetching active promotions:', error)
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!url || url.includes('placeholder-project.supabase.co')) {
     return []
   }
 
-  return (data as Promotion[]) || []
+  try {
+    const supabase = await createClient()
+    const now = new Date().toISOString()
+
+    const { data, error } = await supabase
+      .from('promotions')
+      .select('*')
+      .eq('status', 'active')
+      .lte('start_at', now)
+      .or(`end_at.is.null,end_at.gt.${now}`)
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    if (error) {
+      console.warn(
+        '[Promotions] Could not fetch active promotions from Supabase:',
+        error.message || error.code || 'database unavailable'
+      )
+      return []
+    }
+
+    return (data as Promotion[]) || []
+  } catch (err) {
+    console.warn(
+      '[Promotions] Error connecting to Supabase for promotions:',
+      err instanceof Error ? err.message : String(err)
+    )
+    return []
+  }
 }
 
 /**
