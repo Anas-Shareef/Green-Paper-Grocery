@@ -1101,9 +1101,42 @@ DROP POLICY IF EXISTS "audit_logs_insert" ON public.audit_logs;
 DROP POLICY IF EXISTS "audit_logs_update" ON public.audit_logs;
 DROP POLICY IF EXISTS "audit_logs_delete" ON public.audit_logs;
 
+-- Helper: has_permission function for SQL-level permission checks
+CREATE OR REPLACE FUNCTION public.has_permission(p_permission TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_role public.user_role;
+BEGIN
+    SELECT role INTO v_role
+    FROM public.profiles
+    WHERE id = auth.uid() AND is_active = true;
+
+    IF v_role IS NULL THEN
+        RETURN false;
+    END IF;
+
+    IF v_role IN ('owner', 'admin') THEN
+        RETURN true;
+    END IF;
+
+    IF v_role = 'staff' AND p_permission NOT IN (
+        'expenses.view', 'expenses.create', 'expenses.edit',
+        'reports.view', 'settings.edit', 'users.manage', 'audit.view'
+    ) THEN
+        RETURN true;
+    END IF;
+
+    RETURN false;
+END;
+$$;
+
 DROP POLICY IF EXISTS "audit_logs_select" ON public.audit_logs;
 CREATE POLICY "audit_logs_select" ON public.audit_logs
-    FOR SELECT USING (public.has_permission('audit.view'));
+    FOR SELECT USING (public.is_admin());
 
 DROP POLICY IF EXISTS "audit_logs_insert_service_only" ON public.audit_logs;
 CREATE POLICY "audit_logs_insert_service_only" ON public.audit_logs
