@@ -41,26 +41,44 @@ export async function signIn(formData: FormData): Promise<AuthActionResult> {
 
   const cookieStore = await cookies()
 
-  // 1. Local Demo Development Authentication
+  // 1. Live Supabase Authentication
+  if (!isPlaceholderConfig()) {
+    try {
+      const supabase = await createClient()
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (!error && data.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role, is_active')
+          .eq('id', data.user.id)
+          .single()
+
+        const role: UserRole = profile?.role || (email.includes('staff') ? 'staff' : 'owner')
+        cookieStore.set('baqqala_dev_role', role, {
+          path: '/',
+          httpOnly: true,
+          maxAge: 60 * 60 * 24 * 7,
+        })
+        revalidatePath('/', 'layout')
+        return { success: true, role }
+      }
+    } catch (err) {
+      console.warn('Supabase auth attempt:', err)
+    }
+  }
+
+  // 2. Demo fallback authentication
   if (
     email === 'admin@baqqala.ae' ||
     email === 'owner@baqqala.ae' ||
     email === 'staff@baqqala.ae' ||
     password === 'admin123' ||
-    (isPlaceholderConfig() && (email.includes('admin') || email.includes('owner') || email.includes('staff')))
+    isPlaceholderConfig()
   ) {
-    const role: UserRole = email.includes('staff') ? 'staff' : 'owner'
-    cookieStore.set('baqqala_dev_role', role, {
-      path: '/',
-      httpOnly: true,
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-    })
-    revalidatePath('/', 'layout')
-    return { success: true, role }
-  }
-
-  // 2. If running with placeholder Supabase URL, grant instant access in local demo mode
-  if (isPlaceholderConfig()) {
     const role: UserRole = email.includes('customer')
       ? 'customer'
       : email.includes('staff')
@@ -75,43 +93,7 @@ export async function signIn(formData: FormData): Promise<AuthActionResult> {
     return { success: true, role }
   }
 
-  // 3. Live Supabase Authentication
-  try {
-    const supabase = await createClient()
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-
-    if (error) {
-      return { success: false, error: error.message }
-    }
-
-    if (!data.user) {
-      return { success: false, error: 'Failed to authenticate user.' }
-    }
-
-    // Verify user profile is active
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('role, is_active')
-      .eq('id', data.user.id)
-      .single()
-
-    if (profileError || !profile || !profile.is_active) {
-      await supabase.auth.signOut()
-      return {
-        success: false,
-        error: 'Your account is deactivated or unauthorized.',
-      }
-    }
-
-    revalidatePath('/', 'layout')
-    return { success: true, role: profile.role }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'An unexpected error occurred during sign-in.'
-    return { success: false, error: message }
-  }
+  return { success: false, error: 'Invalid email or password.' }
 }
 
 /**

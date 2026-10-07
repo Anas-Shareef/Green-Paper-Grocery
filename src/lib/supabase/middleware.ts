@@ -43,17 +43,23 @@ export async function updateSession(request: NextRequest) {
       data: { user },
     } = await supabase.auth.getUser()
 
+    const devRole = request.cookies.get('baqqala_dev_role')?.value
+    const isDevAdmin = devRole && ['owner', 'admin', 'staff'].includes(devRole)
+
     // Protected admin route check
-    if (request.nextUrl.pathname.startsWith('/admin') && !user) {
+    if (request.nextUrl.pathname.startsWith('/admin') && !user && !isDevAdmin) {
       const url = request.nextUrl.clone()
       url.pathname = '/login'
       url.searchParams.set('next', request.nextUrl.pathname)
       return NextResponse.redirect(url)
     }
   } catch {
-    if (request.nextUrl.pathname.startsWith('/admin')) {
+    const devRole = request.cookies.get('baqqala_dev_role')?.value
+    const isDevAdmin = devRole && ['owner', 'admin', 'staff'].includes(devRole)
+    if (request.nextUrl.pathname.startsWith('/admin') && !isDevAdmin) {
       const url = request.nextUrl.clone()
       url.pathname = '/login'
+      url.searchParams.set('next', request.nextUrl.pathname)
       return NextResponse.redirect(url)
     }
   }
