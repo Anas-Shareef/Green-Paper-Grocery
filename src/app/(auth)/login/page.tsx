@@ -41,7 +41,9 @@ export default function LoginPage() {
             ? nextUrl && !nextUrl.startsWith('/admin')
               ? nextUrl
               : '/account'
-            : nextUrl || '/admin/dashboard'
+            : nextUrl && nextUrl.startsWith('/admin')
+            ? nextUrl
+            : '/admin/dashboard'
         window.location.href = target
       }
     })
@@ -52,8 +54,7 @@ export default function LoginPage() {
     startTransition(async () => {
       const result = await signInDemoAdmin('owner')
       if (result.success) {
-        const target = nextUrl || '/admin/dashboard'
-        window.location.href = target
+        window.location.href = '/admin/dashboard'
       } else {
         setErrorMsg(result.error ?? 'Demo sign-in failed')
       }

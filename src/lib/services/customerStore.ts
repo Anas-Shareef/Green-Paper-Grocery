@@ -6,11 +6,40 @@ export interface OrderWithItems extends Order {
   customer?: Pick<Customer, 'id' | 'name' | 'mobile'> | null
 }
 
+function isPlaceholderConfig(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  return (
+    !url ||
+    !key ||
+    url.includes('placeholder-project.supabase.co') ||
+    key.includes('placeholder')
+  )
+}
+
 /**
  * Retrieves the customer record linked to the authenticated user.
  * If user exists but customer row does not exist yet, creates one automatically.
  */
 export async function getOrCreateCurrentCustomer(): Promise<Customer | null> {
+  if (isPlaceholderConfig()) {
+    return {
+      id: '00000000-0000-0000-0000-000000000001',
+      name: 'Zone 19 Customer',
+      mobile: '+971 50 123 4567',
+      email: 'customer@baqqala.ae',
+      total_orders: 4,
+      total_spend: 385.5,
+      customer_segment: 'regular',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      auth_user_id: '00000000-0000-0000-0000-000000000001',
+      loyalty_points: 150,
+      notes: null,
+      last_order_at: new Date().toISOString(),
+    } as unknown as Customer
+  }
+
   const supabase = await createClient()
 
   const {
@@ -127,6 +156,28 @@ export async function updateCustomerProfile(data: {
  * Retrieves all saved addresses for the current customer.
  */
 export async function getCustomerAddresses(): Promise<CustomerAddress[]> {
+  if (isPlaceholderConfig()) {
+    return [
+      {
+        id: 'demo-addr-1',
+        customer_id: '00000000-0000-0000-0000-000000000001',
+        label: 'Home',
+        recipient_name: 'Zone 19 Resident',
+        phone: '+971 50 123 4567',
+        building_or_villa: 'Villa 14',
+        street: 'Street 19',
+        area: 'Zone 19',
+        city: 'Abu Dhabi',
+        emirate: 'Abu Dhabi',
+        zone: 'Zone 19',
+        delivery_instructions: 'Front gate delivery',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ]
+  }
+
   const supabase = await createClient()
   const customer = await getOrCreateCurrentCustomer()
 
@@ -424,6 +475,52 @@ export async function placeStorefrontOrder(params: {
  * Fetches order history for current authenticated customer.
  */
 export async function getCustomerOrders(): Promise<OrderWithItems[]> {
+  if (isPlaceholderConfig()) {
+    return [
+      {
+        id: 'demo-ord-1',
+        order_number: 'ORD-2026-0042',
+        customer_id: '00000000-0000-0000-0000-000000000001',
+        status: 'delivered',
+        payment_status: 'paid',
+        payment_method: 'cash_on_delivery',
+        total_amount: 85.5,
+        subtotal: 75.0,
+        tax_amount: 4.28,
+        discount_amount: 5.0,
+        delivery_fee: 0,
+        delivery_address: 'Villa 14, Street 19, Zone 19 Abu Dhabi',
+        delivery_notes: 'Delivered successfully by Zone 19 driver',
+        order_date: new Date(Date.now() - 86400000).toISOString(),
+        created_at: new Date(Date.now() - 86400000).toISOString(),
+        updated_at: new Date(Date.now() - 86400000).toISOString(),
+        coupon_id: null,
+        promotion_discount_total: 5.0,
+        coupon_discount_total: 0,
+        loyalty_discount_total: 0,
+        loyalty_points_earned: 8,
+        loyalty_points_redeemed: 0,
+        items: [
+          {
+            id: 'demo-ord-item-1',
+            order_id: 'demo-ord-1',
+            product_id: 'demo-prod-1',
+            quantity: 2,
+            selling_price: 11.0,
+            total_price: 22.0,
+            unit: 'bottle',
+            product_name: 'Al Rawabi Fresh Full Cream Milk 2L',
+            created_at: new Date().toISOString(),
+            purchase_cost_at_sale: 8.5,
+            discount_amount: 0,
+            original_unit_price: 11.0,
+            applied_promotion_id: null,
+          },
+        ],
+      } as unknown as OrderWithItems,
+    ]
+  }
+
   const supabase = await createClient()
   const customer = await getOrCreateCurrentCustomer()
 

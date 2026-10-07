@@ -2,6 +2,7 @@ import React from 'react'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { getCurrentProfile } from '@/lib/auth/roles'
 import { StoreLayout } from '@/components/storefront/StoreLayout'
 import {
   LayoutDashboard,
@@ -10,6 +11,7 @@ import {
   User,
   LogOut,
   Gift,
+  Shield,
 } from 'lucide-react'
 
 export default async function AccountLayout({
@@ -17,12 +19,29 @@ export default async function AccountLayout({
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const profile = await getCurrentProfile()
+  let userEmail: string | null = null
+  let userName: string = 'Customer'
 
-  if (!user) {
+  if (profile) {
+    userName = profile.full_name || 'Store User'
+    userEmail = `${profile.role}@baqqala.ae`
+  } else {
+    try {
+      const supabase = await createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        userName = user.user_metadata?.full_name || user.email?.split('@')[0] || 'Customer'
+        userEmail = user.email || null
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!profile && !userEmail) {
     redirect('/login?next=/account')
   }
 
@@ -52,12 +71,27 @@ export default async function AccountLayout({
           <aside className="md:col-span-3 rounded-2xl border border-border bg-card p-4 shadow-xs space-y-2 sticky top-24">
             <div className="p-3 mb-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/50">
               <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-bold block truncate">
-                {user.user_metadata?.full_name || 'Customer'}
+                {userName}
               </span>
               <span className="text-[10px] text-muted-foreground block truncate">
-                {user.email}
+                {userEmail}
               </span>
             </div>
+
+            {profile && ['owner', 'admin', 'staff'].includes(profile.role) && (
+              <div className="mb-3">
+                <Link
+                  href="/admin/dashboard"
+                  className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <Shield className="h-3.5 w-3.5" />
+                    Admin Dashboard
+                  </span>
+                  <span>→</span>
+                </Link>
+              </div>
+            )}
 
             <nav className="space-y-1">
               {navItems.map((item) => {
