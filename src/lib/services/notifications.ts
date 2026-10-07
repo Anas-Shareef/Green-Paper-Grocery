@@ -1,10 +1,51 @@
 import { createClient } from '@/lib/supabase/server'
 import type { Notification } from '@/types/database.types'
 
+function isPlaceholderConfig(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  return (
+    !url ||
+    !key ||
+    url.includes('placeholder-project.supabase.co') ||
+    key.includes('placeholder')
+  )
+}
+
 export async function getNotifications(options?: {
   limit?: number
   unreadOnly?: boolean
 }): Promise<Notification[]> {
+  if (isPlaceholderConfig()) {
+    const demoNotifications: Notification[] = [
+      {
+        id: 'demo-notif-1',
+        title: 'Zone 19 Order Received',
+        message: 'Order #ORD-2026-0042 placed via Storefront (Cash on Delivery).',
+        type: 'info',
+        link: '/admin/orders',
+        entity_type: 'order',
+        entity_id: 'demo-ord-1',
+        user_id: null,
+        is_read: false,
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: 'demo-notif-2',
+        title: 'Low Stock Alert',
+        message: 'Al Rawabi Fresh Milk 2L has reached reorder threshold (3 remaining).',
+        type: 'warning',
+        link: '/admin/inventory',
+        entity_type: 'product',
+        entity_id: 'demo-alert-1',
+        user_id: null,
+        is_read: true,
+        created_at: new Date(Date.now() - 3600000).toISOString(),
+      },
+    ]
+    return options?.unreadOnly ? demoNotifications.filter((n) => !n.is_read) : demoNotifications
+  }
+
   const supabase = await createClient()
   const limit = options?.limit ?? 20
 
@@ -28,6 +69,10 @@ export async function getNotifications(options?: {
 }
 
 export async function getUnreadNotificationCount(): Promise<number> {
+  if (isPlaceholderConfig()) {
+    return 1
+  }
+
   const supabase = await createClient()
   const { count, error } = await supabase
     .from('notifications')

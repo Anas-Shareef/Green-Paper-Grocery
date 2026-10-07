@@ -59,13 +59,20 @@ export async function signIn(formData: FormData): Promise<AuthActionResult> {
     return { success: true, role }
   }
 
-  // 2. If running with placeholder Supabase URL and non-demo credentials, inform user clearly
+  // 2. If running with placeholder Supabase URL, grant instant access in local demo mode
   if (isPlaceholderConfig()) {
-    return {
-      success: false,
-      error:
-        'Local Demo Mode: Use email "admin@baqqala.ae" and password "admin123" to sign in as Store Owner, or configure live Supabase credentials in .env.local.',
-    }
+    const role: UserRole = email.includes('customer')
+      ? 'customer'
+      : email.includes('staff')
+      ? 'staff'
+      : 'owner'
+    cookieStore.set('baqqala_dev_role', role, {
+      path: '/',
+      httpOnly: true,
+      maxAge: 60 * 60 * 24 * 7,
+    })
+    revalidatePath('/', 'layout')
+    return { success: true, role }
   }
 
   // 3. Live Supabase Authentication

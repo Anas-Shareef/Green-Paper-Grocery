@@ -36,14 +36,13 @@ export default function LoginPage() {
       if (!result.success) {
         setErrorMsg(result.error ?? 'Authentication failed')
       } else {
-        if (result.role === 'customer') {
-          const target = nextUrl && !nextUrl.startsWith('/admin') ? nextUrl : '/account'
-          router.push(target)
-        } else {
-          const target = nextUrl || '/admin/dashboard'
-          router.push(target)
-        }
-        router.refresh()
+        const target =
+          result.role === 'customer'
+            ? nextUrl && !nextUrl.startsWith('/admin')
+              ? nextUrl
+              : '/account'
+            : nextUrl || '/admin/dashboard'
+        window.location.href = target
       }
     })
   }
@@ -54,8 +53,7 @@ export default function LoginPage() {
       const result = await signInDemoAdmin('owner')
       if (result.success) {
         const target = nextUrl || '/admin/dashboard'
-        router.push(target)
-        router.refresh()
+        window.location.href = target
       } else {
         setErrorMsg(result.error ?? 'Demo sign-in failed')
       }

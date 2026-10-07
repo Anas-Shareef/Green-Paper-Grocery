@@ -55,6 +55,17 @@ export interface DashboardMetrics {
   }
 }
 
+function isPlaceholderConfig(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  return (
+    !url ||
+    !key ||
+    url.includes('placeholder-project.supabase.co') ||
+    key.includes('placeholder')
+  )
+}
+
 /**
  * Server-side service to aggregate dashboard metrics directly from PostgreSQL
  * Adheres strictly to:
@@ -68,8 +79,77 @@ export async function getDashboardSummary(
   customStart?: string,
   customEnd?: string
 ): Promise<DashboardMetrics> {
-  const supabase = await createClient()
   const { startDate, endExclusive, label } = getDateRangeBounds(range, customStart, customEnd)
+
+  if (isPlaceholderConfig()) {
+    return {
+      dateRange: range,
+      rangeLabel: label,
+      startDate,
+      endExclusive,
+      overview: {
+        totalSales: 14250.75,
+        orderCount: 128,
+        averageOrderValue: 111.33,
+        grossProfit: 4620.50,
+        operatingExpenses: 1150.00,
+        estimatedOperatingProfit: 3470.50,
+      },
+      orderStatuses: {
+        pending: 3,
+        confirmed: 5,
+        preparing: 8,
+        ready: 4,
+        out_for_delivery: 6,
+        delivered: 98,
+        cancelled: 4,
+      },
+      inventoryAlerts: {
+        lowStockCount: 2,
+        outOfStockCount: 1,
+        items: [
+          {
+            id: 'demo-alert-1',
+            name: 'Al Rawabi Fresh Milk 2L (Full Cream)',
+            sku: 'RAW-MLK-2L',
+            stockQuantity: 3,
+            reorderLevel: 10,
+            unit: 'bottle',
+          },
+          {
+            id: 'demo-alert-2',
+            name: 'Local Farm Fresh Tomatoes (UAE)',
+            sku: 'VEG-TOM-UAE',
+            stockQuantity: 2.5,
+            reorderLevel: 8,
+            unit: 'kg',
+          },
+          {
+            id: 'demo-alert-3',
+            name: 'Lulu Fresh Eggs Large 30s',
+            sku: 'EGG-LRG-30',
+            stockQuantity: 0,
+            reorderLevel: 5,
+            unit: 'tray',
+          },
+        ],
+      },
+      customers: {
+        totalCustomers: 240,
+        newCustomersInRange: 18,
+        returningCustomersCount: 165,
+        inactiveCustomersCount: 12,
+      },
+      purchasingSummary: {
+        pendingReceivingsCount: 2,
+        outstandingPayables: 3840.00,
+        overdueInvoicesCount: 0,
+        purchasesInRangeTotal: 5200.00,
+      },
+    }
+  }
+
+  const supabase = await createClient()
 
   // 1. Fetch Orders within strictly bounded date range: [startDate, endExclusive)
   const { data: orders, error: ordersError } = await supabase
