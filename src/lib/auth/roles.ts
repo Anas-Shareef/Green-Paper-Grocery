@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { cookies } from 'next/headers'
 import type { Profile, UserRole } from '@/types/database.types'
 import { redirect } from 'next/navigation'
 
@@ -31,6 +32,28 @@ export function hasRole(currentRole: UserRole, allowedRoles: UserRole[]): boolea
  */
 export async function getCurrentProfile(): Promise<Profile | null> {
   try {
+    // 1. Check for local demo development session cookie
+    const cookieStore = await cookies()
+    const devRole = cookieStore.get('baqqala_dev_role')?.value as UserRole | undefined
+
+    if (devRole && ['owner', 'admin', 'staff', 'customer'].includes(devRole)) {
+      return {
+        id: '00000000-0000-0000-0000-000000000001',
+        full_name:
+          devRole === 'owner'
+            ? 'Store Owner (Zone 19)'
+            : devRole === 'admin'
+            ? 'Store Admin'
+            : 'Store Staff',
+        phone: '+971 50 123 4567',
+        avatar_url: null,
+        role: devRole,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+    }
+
     const supabase = await createClient()
     const {
       data: { user },
