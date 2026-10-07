@@ -31,24 +31,26 @@ const CartContext = createContext<CartContextType | undefined>(undefined)
 const STORAGE_KEY = 'baqqala_customer_cart_v1'
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
-  const [items, setItems] = useState<CartItem[]>(() => {
-    if (typeof window === 'undefined') return []
+  const [items, setItems] = useState<CartItem[]>([])
+  const [isLoaded, setIsLoaded] = useState<boolean>(false)
+
+  // Load cart from localStorage after mount on client
+  useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
         const parsed = JSON.parse(stored)
         if (Array.isArray(parsed)) {
-          return parsed
+          setItems(parsed)
         }
       }
     } catch {
       // fallback
     }
-    return []
-  })
-  const [isLoaded] = useState<boolean>(true)
+    setIsLoaded(true)
+  }, [])
 
-  // Persist cart to localStorage whenever items change
+  // Persist cart to localStorage whenever items change after initial load
   useEffect(() => {
     if (!isLoaded) return
     try {

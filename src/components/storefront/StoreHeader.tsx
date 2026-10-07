@@ -35,6 +35,11 @@ export function StoreHeader() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const [prevPathname, setPrevPathname] = useState(pathname)
   const [user, setUser] = useState<SupabaseUser | null>(null)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   // Adjust state when urlQuery or pathname changes during render
   if (urlQuery !== prevUrlQuery) {
@@ -246,7 +251,7 @@ export function StoreHeader() {
               >
                 <ShoppingCart className="h-4 w-4" />
                 <span className="hidden sm:inline">Cart</span>
-                {totalCount > 0 && (
+                {mounted && totalCount > 0 && (
                   <span className="h-5 min-w-5 px-1 rounded-full bg-emerald-600 text-white font-bold text-[10px] flex items-center justify-center animate-in zoom-in">
                     {totalCount}
                   </span>
