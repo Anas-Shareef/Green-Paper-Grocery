@@ -9,6 +9,8 @@ export const metadata = {
   description: 'Explore all fresh grocery categories in Baqqala Grocery, Zone 19, Abu Dhabi.',
 }
 
+export const dynamic = 'force-dynamic'
+
 export default async function CategoriesPage() {
   const categories = await getStorefrontCategories()
 

@@ -17,7 +17,7 @@ import {
   Tag,
 } from 'lucide-react'
 
-export const revalidate = 60 // Revalidate home page every minute
+export const dynamic = 'force-dynamic'
 
 export default async function StorefrontHomePage() {
   const [categories, featuredProducts, activePromotions] = await Promise.all([
