@@ -9,9 +9,10 @@ import type { StorefrontCategoryWithCount } from '@/lib/services/storefront'
 
 interface CatalogFiltersProps {
   categories: StorefrontCategoryWithCount[]
+  mode?: 'desktop' | 'mobile' | 'both'
 }
 
-export function CatalogFilters({ categories }: CatalogFiltersProps) {
+export function CatalogFilters({ categories, mode = 'both' }: CatalogFiltersProps) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -198,67 +199,75 @@ export function CatalogFilters({ categories }: CatalogFiltersProps) {
     </div>
   )
 
+  const showDesktop = mode === 'desktop' || mode === 'both'
+  const showMobile = mode === 'mobile' || mode === 'both'
+
   return (
     <>
       {/* Desktop Filter Sidebar */}
-      <aside className="hidden lg:block w-64 shrink-0 rounded-2xl border border-border bg-card p-5 shadow-xs h-fit sticky top-20">
-        {filterContent}
-      </aside>
+      {showDesktop && (
+        <aside className="hidden lg:block w-64 shrink-0 rounded-2xl border border-border bg-card p-5 shadow-2xs h-fit sticky top-24">
+          {filterContent}
+        </aside>
+      )}
 
       {/* Mobile Trigger Button */}
-      <div className="lg:hidden">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => setMobileDrawerOpen(true)}
-          className="h-9 gap-2 text-xs font-semibold rounded-xl border-border"
-        >
-          <Filter className="h-3.5 w-3.5" />
-          <span>Filters</span>
-          {activeFiltersCount > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-600 text-white">
-              {activeFiltersCount}
-            </span>
-          )}
-        </Button>
+      {showMobile && (
+        <div className="lg:hidden">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setMobileDrawerOpen(true)}
+            className="h-9 gap-2 text-xs font-semibold rounded-xl border-border"
+          >
+            <Filter className="h-3.5 w-3.5 text-emerald-600" />
+            <span>Filters</span>
+            {activeFiltersCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-600 text-white">
+                {activeFiltersCount}
+              </span>
+            )}
+          </Button>
 
-        {/* Mobile Slide-Over Drawer */}
-        {mobileDrawerOpen && (
-          <div className="fixed inset-0 z-50 flex">
-            {/* Backdrop */}
-            <div
-              className="fixed inset-0 bg-black/50 backdrop-blur-xs transition-opacity"
-              onClick={() => setMobileDrawerOpen(false)}
-            />
+          {/* Mobile Slide-Over Drawer */}
+          {mobileDrawerOpen && (
+            <div className="fixed inset-0 z-50 flex">
+              {/* Backdrop */}
+              <div
+                className="fixed inset-0 bg-black/50 backdrop-blur-xs transition-opacity"
+                onClick={() => setMobileDrawerOpen(false)}
+              />
 
-            {/* Slide-over panel */}
-            <div className="relative ml-auto w-full max-w-xs bg-card p-6 shadow-2xl flex flex-col justify-between overflow-y-auto z-10 animate-in slide-in-from-right">
-              <div>
-                <div className="flex items-center justify-between pb-4 mb-4 border-b border-border">
-                  <h3 className="font-bold text-base text-foreground">Filter Products</h3>
-                  <button
-                    type="button"
-                    onClick={() => setMobileDrawerOpen(false)}
-                    className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
+              {/* Slide-over panel */}
+              <div className="relative ml-auto w-full max-w-xs bg-card p-6 shadow-2xl flex flex-col justify-between overflow-y-auto z-10 animate-in slide-in-from-right">
+                <div>
+                  <div className="flex items-center justify-between pb-4 mb-4 border-b border-border">
+                    <h3 className="font-bold text-base text-foreground">Filter Products</h3>
+                    <button
+                      type="button"
+                      onClick={() => setMobileDrawerOpen(false)}
+                      className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted"
+                      aria-label="Close filters"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                  {filterContent}
                 </div>
-                {filterContent}
-              </div>
 
-              <div className="pt-6 border-t border-border mt-6">
-                <Button
-                  onClick={() => setMobileDrawerOpen(false)}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
-                >
-                  View Results
-                </Button>
+                <div className="pt-6 border-t border-border mt-6">
+                  <Button
+                    onClick={() => setMobileDrawerOpen(false)}
+                    className="w-full h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs"
+                  >
+                    View Results
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </>
   )
 }

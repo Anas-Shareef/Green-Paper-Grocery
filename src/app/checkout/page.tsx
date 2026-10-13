@@ -23,7 +23,7 @@ export default async function CheckoutPage() {
 
   return (
     <StoreLayout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12 space-y-8">
+      <div className="store-container py-8 md:py-12 space-y-8">
         {/* Breadcrumb & Navigation */}
         <div className="flex items-center justify-between pb-4 border-b border-border">
           <div className="flex items-center gap-3">

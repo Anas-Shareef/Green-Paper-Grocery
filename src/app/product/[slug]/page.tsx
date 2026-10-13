@@ -72,9 +72,9 @@ export default async function ProductDetailPage({ params }: PageProps) {
 
   return (
     <StoreLayout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">
+      <div className="store-container py-8 md:py-12 space-y-12">
         {/* Breadcrumb Navigation */}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground pb-4 border-b border-border/60">
           <Link href="/" className="hover:text-foreground">
             Home
           </Link>
@@ -100,11 +100,11 @@ export default async function ProductDetailPage({ params }: PageProps) {
         </div>
 
         {/* Product Showcase Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-14 items-start">
           {/* Left: Product Image Box */}
-          <div className="relative aspect-square w-full rounded-3xl border border-border bg-card p-8 flex items-center justify-center shadow-xs overflow-hidden">
+          <div className="relative aspect-square w-full rounded-3xl border border-border/80 bg-card p-8 flex items-center justify-center shadow-2xs overflow-hidden">
             {hasPromo && (
-              <div className="absolute top-4 left-4 z-10 px-3 py-1 rounded-full text-xs font-black bg-rose-500 text-white shadow-sm">
+              <div className="absolute top-4 left-4 z-10 px-3 py-1 rounded-full text-xs font-black bg-rose-500 text-white shadow-xs">
                 {discountPercent}% OFF
               </div>
             )}
@@ -116,14 +116,14 @@ export default async function ProductDetailPage({ params }: PageProps) {
                   alt={product.name}
                   fill
                   sizes="(max-width: 768px) 100vw, 50vw"
-                  className="object-contain p-4"
+                  className="object-contain p-4 hover:scale-105 transition-transform duration-300"
                   priority
                 />
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center text-muted-foreground/60 p-8 text-center">
-                <ShoppingBag className="h-20 w-20 mb-3 opacity-30" />
-                <span className="text-xs font-semibold">Baqqala Fresh Produce</span>
+                <ShoppingBag className="h-20 w-20 mb-3 opacity-30 text-emerald-600" />
+                <span className="text-xs font-semibold text-muted-foreground">Baqqala Fresh Produce</span>
               </div>
             )}
           </div>
@@ -132,7 +132,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
           <div className="space-y-6">
             <div>
               {/* Category & Brand */}
-              <div className="flex items-center gap-2 text-xs text-emerald-600 font-bold uppercase tracking-wider mb-2">
+              <div className="flex items-center gap-2 text-xs text-emerald-600 font-extrabold uppercase tracking-wider mb-2">
                 {product.category && (
                   <Link
                     href={`/shop?category=${product.category.slug}`}
@@ -155,17 +155,17 @@ export default async function ProductDetailPage({ params }: PageProps) {
               </h1>
 
               {/* Unit Tag */}
-              <div className="mt-2 inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-muted text-xs font-medium text-muted-foreground">
+              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-muted text-xs font-medium text-muted-foreground">
                 <span>Unit:</span>
                 <strong className="text-foreground font-mono">{product.unit}</strong>
               </div>
             </div>
 
             {/* Pricing Section */}
-            <div className="p-4 rounded-2xl bg-muted/30 border border-border/80 flex items-baseline gap-3 flex-wrap">
+            <div className="p-5 rounded-2xl bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-100/60 dark:border-emerald-900/40 flex items-baseline gap-3.5 flex-wrap">
               <CurrencyDisplay
                 amount={effectivePrice}
-                className="text-3xl font-black text-foreground"
+                className="text-3xl font-black text-foreground tracking-tight"
               />
               {hasPromo && (
                 <div className="flex items-baseline gap-2">
@@ -221,7 +221,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
               </div>
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-emerald-600 shrink-0" />
-                <span>Fast 30-min fulfillment</span>
+                <span>Fast neighborhood fulfillment</span>
               </div>
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0" />

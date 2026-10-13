@@ -66,10 +66,10 @@ export function ProductCard({ product }: ProductCardProps) {
   }
 
   return (
-    <div className="group relative flex flex-col justify-between rounded-2xl border border-border bg-card p-3 sm:p-4 shadow-xs hover:shadow-md hover:border-emerald-600/40 transition-all">
+    <div className="group relative flex flex-col justify-between h-full rounded-2xl border border-border bg-card p-3 sm:p-4 shadow-2xs hover:shadow-md hover:border-emerald-600/40 hover:-translate-y-0.5 transition-all duration-200">
       {/* Discount Badge */}
       {hasPromo && (
-        <div className="absolute top-3 left-3 z-10 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white shadow-xs">
+        <div className="absolute top-3 left-3 z-10 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white shadow-xs tracking-tight">
           {discountPercent}% OFF
         </div>
       )}
@@ -90,7 +90,7 @@ export function ProductCard({ product }: ProductCardProps) {
       {/* Product Image */}
       <Link
         href={`/product/${product.slug}`}
-        className="block relative aspect-square w-full overflow-hidden rounded-xl bg-muted/40 mb-3"
+        className="block relative aspect-square w-full overflow-hidden rounded-xl bg-neutral-50 dark:bg-muted/30 mb-3"
       >
         {product.image_url ? (
           <Image
@@ -102,8 +102,8 @@ export function ProductCard({ product }: ProductCardProps) {
           />
         ) : (
           <div className="h-full w-full flex flex-col items-center justify-center text-muted-foreground/60 p-4 text-center">
-            <ShoppingBag className="h-10 w-10 mb-1 opacity-40" />
-            <span className="text-[11px] font-medium">Baqqala Fresh</span>
+            <ShoppingBag className="h-10 w-10 mb-1 opacity-30 text-emerald-600" />
+            <span className="text-[10px] font-semibold text-muted-foreground">Baqqala Fresh</span>
           </div>
         )}
       </Link>
@@ -113,15 +113,17 @@ export function ProductCard({ product }: ProductCardProps) {
         <div>
           {/* Category & Unit */}
           <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
-            <span className="truncate">{product.category?.name || 'Grocery'}</span>
-            <span className="font-mono bg-muted/60 px-1.5 py-0.5 rounded text-[10px]">
+            <span className="truncate max-w-[120px] font-medium text-emerald-700 dark:text-emerald-400">
+              {product.category?.name || 'Grocery'}
+            </span>
+            <span className="font-mono bg-muted/70 px-1.5 py-0.5 rounded text-[10px] text-foreground font-medium">
               {product.unit}
             </span>
           </div>
 
-          {/* Product Name */}
+          {/* Product Name with Stable Height */}
           <Link href={`/product/${product.slug}`} className="block">
-            <h3 className="font-semibold text-sm text-foreground line-clamp-2 hover:text-emerald-600 transition-colors">
+            <h3 className="font-bold text-sm text-foreground line-clamp-2 min-h-[2.5rem] leading-snug group-hover:text-emerald-600 transition-colors">
               {product.name}
             </h3>
           </Link>
@@ -129,11 +131,11 @@ export function ProductCard({ product }: ProductCardProps) {
 
         {/* Pricing & Add to Cart Container */}
         <div className="pt-2 border-t border-border/60">
-          <div className="flex items-baseline justify-between mb-2">
+          <div className="flex items-baseline justify-between mb-2 min-h-[1.75rem]">
             <div className="flex items-baseline gap-1.5 flex-wrap">
               <CurrencyDisplay
                 amount={effectivePrice}
-                className="text-base sm:text-lg font-bold text-foreground"
+                className="text-base sm:text-lg font-black text-foreground tracking-tight"
               />
               {hasPromo && (
                 <CurrencyDisplay
@@ -155,28 +157,28 @@ export function ProductCard({ product }: ProductCardProps) {
               disabled
               size="sm"
               variant="outline"
-              className="w-full text-xs font-semibold h-9 opacity-60 cursor-not-allowed bg-muted/40"
+              className="w-full text-xs font-semibold h-9 opacity-60 cursor-not-allowed bg-muted/40 rounded-xl"
             >
               Unavailable
             </Button>
           ) : cartQty > 0 ? (
-            <div className="flex items-center justify-between h-9 rounded-xl border border-emerald-600/40 bg-emerald-50/50 dark:bg-emerald-950/30 px-1">
+            <div className="flex items-center justify-between h-9 rounded-xl border border-emerald-600/40 bg-emerald-50/60 dark:bg-emerald-950/40 px-1 shadow-2xs">
               <button
                 type="button"
                 onClick={handleDecrement}
-                className="h-7 w-7 rounded-lg bg-card text-foreground flex items-center justify-center hover:bg-muted shadow-xs transition-colors"
+                className="h-7 w-7 rounded-lg bg-card text-foreground flex items-center justify-center hover:bg-muted shadow-2xs transition-colors"
                 aria-label="Decrease quantity"
               >
                 <Minus className="h-3.5 w-3.5" />
               </button>
-              <span className="font-bold text-xs text-emerald-800 dark:text-emerald-300 px-2 font-mono">
+              <span className="font-black text-xs text-emerald-800 dark:text-emerald-200 px-2 font-mono">
                 {cartQty}
               </span>
               <button
                 type="button"
                 onClick={handleIncrement}
                 disabled={cartQty >= stock}
-                className="h-7 w-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center hover:bg-emerald-700 shadow-xs transition-colors disabled:opacity-50"
+                className="h-7 w-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center hover:bg-emerald-700 shadow-2xs transition-colors disabled:opacity-50"
                 aria-label="Increase quantity"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -187,7 +189,7 @@ export function ProductCard({ product }: ProductCardProps) {
               type="button"
               onClick={handleAdd}
               size="sm"
-              className="w-full h-9 text-xs font-semibold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all active:scale-[0.98]"
+              className="w-full h-9 text-xs font-bold gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition-all active:scale-[0.98]"
             >
               <Plus className="h-3.5 w-3.5" />
               Add to Cart

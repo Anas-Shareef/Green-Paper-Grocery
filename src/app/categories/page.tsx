@@ -16,9 +16,9 @@ export default async function CategoriesPage() {
 
   return (
     <StoreLayout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
+      <div className="store-container py-10 md:py-14 space-y-8">
         {/* Breadcrumb & Header */}
-        <div className="space-y-2">
+        <div className="space-y-2 pb-6 border-b border-border/60">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Link href="/" className="hover:text-foreground">
               Home
@@ -27,23 +27,23 @@ export default async function CategoriesPage() {
             <span className="text-foreground font-semibold">Categories</span>
           </div>
 
-          <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-foreground">
-            Browse All Categories
+          <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-foreground">
+            Browse All Grocery Categories
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground max-w-xl leading-relaxed">
-            From farm-fresh vegetables and dairy to pantry staples and household goods, browse our curated grocery sections.
+            From farm-fresh vegetables and local dairy to pantry staples and household goods, explore our organized grocery sections in Zone 19.
           </p>
         </div>
 
         {/* Categories Grid */}
         {categories.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5 sm:gap-4.5">
             {categories.map((category) => (
               <CategoryCard key={category.id} category={category} />
             ))}
           </div>
         ) : (
-          <div className="rounded-2xl border border-dashed border-border p-12 text-center text-xs text-muted-foreground">
+          <div className="rounded-3xl border border-dashed border-border p-16 text-center text-xs text-muted-foreground">
             No active categories found.
           </div>
         )}

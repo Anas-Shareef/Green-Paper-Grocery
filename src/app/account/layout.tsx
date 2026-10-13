@@ -55,7 +55,7 @@ export default async function AccountLayout({
 
   return (
     <StoreLayout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12 space-y-8">
+      <div className="store-container py-8 md:py-12 space-y-8">
         {/* Account Header */}
         <div className="pb-6 border-b border-border">
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">

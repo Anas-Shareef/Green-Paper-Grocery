@@ -12,10 +12,10 @@ export function CategoryCard({ category }: CategoryCardProps) {
   return (
     <Link
       href={`/shop?category=${category.slug}`}
-      className="group relative flex flex-col items-center justify-between rounded-2xl border border-border bg-card p-4 sm:p-5 text-center shadow-xs hover:border-emerald-600/40 hover:shadow-md transition-all overflow-hidden"
+      className="group relative flex flex-col items-center justify-between rounded-2xl border border-border/80 bg-card p-4 sm:p-5 text-center shadow-2xs hover:border-emerald-600/40 hover:shadow-md hover:-translate-y-1 transition-all duration-200 overflow-hidden"
     >
-      {/* Category Image or Icon */}
-      <div className="relative h-20 w-20 sm:h-24 sm:w-24 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform overflow-hidden">
+      {/* Category Image or Icon with soft pill backing */}
+      <div className="relative h-20 w-20 sm:h-24 sm:w-24 rounded-2xl bg-gradient-to-b from-emerald-50/90 to-emerald-100/50 dark:from-emerald-950/40 dark:to-emerald-900/20 border border-emerald-100/60 dark:border-emerald-800/40 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform duration-200 overflow-hidden shadow-2xs">
         {category.image_url ? (
           <Image
             src={category.image_url}
@@ -30,10 +30,10 @@ export function CategoryCard({ category }: CategoryCardProps) {
       </div>
 
       <div className="space-y-1 w-full">
-        <h3 className="font-bold text-sm sm:text-base text-foreground group-hover:text-emerald-600 transition-colors truncate">
+        <h3 className="font-extrabold text-xs sm:text-sm text-foreground group-hover:text-emerald-600 transition-colors truncate">
           {category.name}
         </h3>
-        <p className="text-xs text-muted-foreground font-medium">
+        <p className="text-[11px] text-muted-foreground font-medium">
           {category.product_count !== undefined ? `${category.product_count} items` : 'Explore'}
         </p>
       </div>

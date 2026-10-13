@@ -31,7 +31,7 @@ function CartContent() {
 
   if (!isLoaded) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-16 text-center text-xs text-muted-foreground">
+      <div className="store-container py-20 text-center text-xs text-muted-foreground">
         Loading your cart...
       </div>
     )
@@ -45,53 +45,68 @@ function CartContent() {
   const grandTotal = Number((subtotal + taxAmount + deliveryFee).toFixed(2))
 
   const amountNeededForFreeDelivery = Math.max(0, freeDeliveryThreshold - subtotal)
+  const deliveryProgressPercent = Math.min(100, Math.round((subtotal / freeDeliveryThreshold) * 100))
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12 space-y-8">
-        {/* Title */}
-        <div className="flex items-center justify-between pb-4 border-b border-border">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-              Shopping Cart
-            </h1>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Review your items and proceed to checkout for Zone 19 delivery
-            </p>
-          </div>
-          {items.length > 0 && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={clearCart}
-              className="text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-            >
-              <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Clear Cart
-            </Button>
-          )}
+    <div className="store-container py-8 md:py-12 space-y-8">
+      {/* Title */}
+      <div className="flex items-center justify-between pb-5 border-b border-border/60">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+            Shopping Cart
+          </h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Review your items and proceed to checkout for Zone 19 delivery
+          </p>
         </div>
+        {items.length > 0 && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={clearCart}
+            className="text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl"
+          >
+            <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Clear Cart
+          </Button>
+        )}
+      </div>
 
-        {items.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-            {/* Left Column: Cart Items List */}
-            <div className="lg:col-span-8 space-y-4">
-              {/* Free delivery progress banner */}
-              {subtotal < freeDeliveryThreshold && (
-                <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/50 flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300">
+      {items.length > 0 ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Left Column: Cart Items List */}
+          <div className="lg:col-span-8 space-y-4">
+            {/* Free delivery progress banner with visual bar */}
+            {subtotal < freeDeliveryThreshold ? (
+              <div className="p-4 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60 space-y-2">
+                <div className="flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-200 font-medium">
                   <div className="flex items-center gap-2">
                     <Truck className="h-4 w-4 text-emerald-600" />
                     <span>
                       Add <strong>AED {amountNeededForFreeDelivery.toFixed(2)}</strong> more to get <strong>FREE delivery</strong>!
                     </span>
                   </div>
-                  <Link href="/shop" className="font-bold underline text-emerald-700 hover:text-emerald-800">
+                  <Link href="/shop" className="font-bold underline text-emerald-700 dark:text-emerald-400 hover:text-emerald-900">
                     Add Items
                   </Link>
                 </div>
-              )}
+                {/* Visual Progress Bar */}
+                <div className="w-full bg-emerald-200/50 dark:bg-emerald-900/40 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-emerald-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${deliveryProgressPercent}%` }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60 flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-200 font-semibold">
+                <Truck className="h-4 w-4 text-emerald-600" />
+                <span>You unlocked <strong>FREE Zone 19 delivery</strong> on this order!</span>
+              </div>
+            )}
 
-              {/* Items Table / Cards */}
-              <div className="rounded-2xl border border-border bg-card divide-y divide-border overflow-hidden shadow-xs">
+            {/* Items Table / Cards */}
+            <div className="rounded-3xl border border-border bg-card divide-y divide-border overflow-hidden shadow-2xs">
                 {items.map((item) => {
                   const lineTotal = item.price * item.quantity
                   return (
