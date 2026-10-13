@@ -105,39 +105,31 @@ export function StoreHeader() {
 
   return (
     <header className="sticky top-0 z-50 w-full bg-card/95 backdrop-blur-md border-b border-border/80 shadow-xs">
-      {/* 1. Top Utility Notification Bar */}
-      <div className="bg-emerald-800 text-emerald-50 text-[11px] py-1.5 px-4 font-medium transition-colors">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 truncate">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-semibold text-white">Zone 19 Express:</span>
-            <span className="truncate opacity-95">
-              Fresh daily delivery direct to your villa or apartment • Free delivery over AED 100
-            </span>
+      {/* 1. Top Utility Notification Bar (Matches FreshMart Image 2) */}
+      <div className="bg-[#14532d] text-emerald-50 text-[11px] py-1.5 px-4 font-medium transition-colors">
+        <div className="store-container flex items-center justify-between gap-4">
+          <div className="flex items-center gap-1.5 truncate">
+            <span className="text-emerald-300 text-[10px] uppercase font-bold tracking-wider">Delivery to</span>
+            <MapPin className="h-3 w-3 text-emerald-300 shrink-0" />
+            <span className="font-bold text-white truncate">Zone 19, Abu Dhabi, United Arab Emirates</span>
           </div>
 
-          <div className="hidden md:flex items-center gap-5 shrink-0 text-emerald-100">
-            <span className="flex items-center gap-1.5">
-              <ShieldCheck className="h-3.5 w-3.5 text-emerald-300" />
-              100% Genuine Quality
-            </span>
-            <span className="h-3 w-px bg-emerald-600/60" />
-            <Link
-              href="/admin/dashboard"
-              className="text-emerald-200 hover:text-white transition-colors underline-offset-2 hover:underline"
-            >
-              Staff Portal
-            </Link>
+          <div className="hidden sm:flex items-center gap-4 shrink-0 text-emerald-100 text-[11px]">
+            <span>Call Us for any query or help: <strong className="text-white">+971 2 642 8899</strong></span>
+            <span className="h-3 w-px bg-emerald-700" />
+            <span>English</span>
+            <span className="h-3 w-px bg-emerald-700" />
+            <span className="font-bold text-white">AED</span>
           </div>
         </div>
       </div>
 
       {/* 2. Main Navigation Header */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="store-container">
         <div className="h-18 flex items-center justify-between gap-4 sm:gap-6">
           {/* Brand Logo */}
           <Link href="/" className="flex items-center gap-2.5 shrink-0 group">
-            <div className="h-11 w-11 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold shadow-sm shadow-emerald-600/30 group-hover:scale-105 transition-transform">
+            <div className="h-11 w-11 rounded-2xl bg-[#16a34a] text-white flex items-center justify-center font-bold shadow-sm shadow-emerald-600/30 group-hover:scale-105 transition-transform">
               <Store className="h-6 w-6" />
             </div>
             <div>
@@ -145,7 +137,7 @@ export function StoreHeader() {
                 <span className="font-black text-xl tracking-tight text-foreground leading-none">
                   Baqqala
                 </span>
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
                   Grocery
                 </span>
               </div>
@@ -153,6 +145,15 @@ export function StoreHeader() {
                 Zone 19 • Abu Dhabi
               </span>
             </div>
+          </Link>
+
+          {/* All Categories Dropdown Button (FreshMart Style in Image 2) */}
+          <Link
+            href="/categories"
+            className="hidden lg:flex items-center gap-2 h-11 px-4 rounded-xl border border-border/80 bg-muted/30 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-600/40 text-xs font-bold transition-all shadow-2xs shrink-0"
+          >
+            <Menu className="h-4 w-4 text-[#16a34a]" />
+            <span>All Categories</span>
           </Link>
 
           {/* Central Search Bar */}
@@ -163,18 +164,19 @@ export function StoreHeader() {
             <div className="relative w-full">
               <Input
                 type="search"
-                placeholder="Search fresh vegetables, dairy, bakery, rice, beverages..."
+                placeholder="Search for Product, Brand or Category..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-11 pr-24 h-11 rounded-2xl bg-muted/40 border-border/80 focus:bg-card focus:border-emerald-600 text-xs font-medium placeholder:text-muted-foreground/70 transition-all shadow-2xs"
+                className="w-full pl-5 pr-12 h-11 rounded-2xl bg-muted/40 border-border/80 focus:bg-card focus:border-[#16a34a] text-xs font-medium placeholder:text-muted-foreground/70 transition-all shadow-2xs"
               />
-              <Search className="absolute left-4 top-3.5 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Button
                 type="submit"
                 size="sm"
-                className="absolute right-1.5 top-1.5 h-8 px-4 rounded-xl text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition-all shadow-xs"
+                variant="ghost"
+                className="absolute right-1 top-1.5 h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-[#16a34a]"
+                aria-label="Search"
               >
-                Search
+                <Search className="h-4 w-4" />
               </Button>
             </div>
           </form>
