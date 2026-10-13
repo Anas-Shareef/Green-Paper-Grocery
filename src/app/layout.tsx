@@ -1,29 +1,31 @@
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { Inter, DM_Sans } from 'next/font/google'
 import './globals.css'
 
-const geistSans = Geist({
-  variable: '--font-geist-sans',
+const inter = Inter({
+  variable: '--font-inter',
   subsets: ['latin'],
+  display: 'swap',
 })
 
-const geistMono = Geist_Mono({
-  variable: '--font-geist-mono',
+const dmSans = DM_Sans({
+  variable: '--font-dm-sans',
   subsets: ['latin'],
+  display: 'swap',
 })
 
 export const metadata: Metadata = {
   title: {
-    default: 'Baqqala Grocery — Management & Platform',
+    default: 'Baqqala Grocery — Zone 19, Abu Dhabi',
     template: '%s | Baqqala Grocery',
   },
   description:
-    'Comprehensive Grocery Operating System & Customer Platform for Baqqala Grocery, Zone 19, Abu Dhabi.',
+    'Fresh local grocery delivery platform for Baqqala Grocery, Zone 19, Abu Dhabi, United Arab Emirates.',
   keywords: [
     'Baqqala Grocery',
     'Abu Dhabi Grocery',
     'Zone 19 Grocery Delivery',
-    'Grocery Management System',
+    'Fresh Groceries Abu Dhabi',
   ],
 }
 
@@ -35,9 +37,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${inter.variable} ${dmSans.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-background text-foreground selection:bg-emerald-600 selection:text-white">
+      <body className="min-h-full flex flex-col font-sans bg-background text-foreground selection:bg-emerald-600 selection:text-white">
         {children}
       </body>
     </html>
