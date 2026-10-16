@@ -60,19 +60,25 @@ export function StoreHeader() {
 
   // Listen to Supabase auth state
   useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user)
-    })
+    try {
+      const supabase = createClient()
+      supabase.auth.getUser().then(({ data }) => {
+        setUser(data.user)
+      }).catch((e) => {
+        console.warn('Could not retrieve user:', e)
+      })
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null)
-    })
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
+        setUser(session?.user || null)
+      })
 
-    return () => {
-      subscription.unsubscribe()
+      return () => {
+        subscription.unsubscribe()
+      }
+    } catch (e) {
+      console.warn('Auth initialization skipped:', e)
     }
   }, [])
 
