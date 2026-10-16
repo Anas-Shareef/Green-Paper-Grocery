@@ -112,9 +112,9 @@ export function StockAdjustmentDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in-0">
-      <div className="relative w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl overflow-hidden animate-in zoom-in-95">
+      <div className="relative w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-border bg-muted/20">
+        <div className="flex items-center justify-between p-5 border-b border-border bg-muted/20 shrink-0">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
               <ArrowDownUp className="h-5 w-5" />
@@ -140,7 +140,7 @@ export function StockAdjustmentDialog({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-5">
+        <form onSubmit={handleSubmit} className="p-5 space-y-5 overflow-y-auto">
           {/* Target Product Summary */}
           <div className="p-3.5 rounded-xl border border-border bg-muted/30 flex items-center justify-between">
             <div>

@@ -9,6 +9,7 @@ import {
   LogOut,
   User,
   Shield,
+  Store,
 } from 'lucide-react'
 import type { Profile } from '@/types/database.types'
 
@@ -27,27 +28,35 @@ export function AdminHeader({
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-card/80 px-4 backdrop-blur-md sm:px-6 lg:px-8">
-      {/* Left side: Mobile Toggle & Store status */}
+      {/* Left side: Mobile/Tablet Toggle & Store status */}
       <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={onToggleSidebar}
-          className="p-2 -ml-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground md:hidden"
+          className="p-2 -ml-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
           aria-label="Toggle Navigation"
         >
           <Menu className="h-5 w-5" />
         </button>
 
-        <div className="hidden sm:flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-xs font-medium text-muted-foreground">
-            Baqqala Abu Dhabi (Zone 19)
+          <span className="text-xs font-semibold text-foreground truncate max-w-[150px] sm:max-w-none">
+            Baqqala Ops • Zone 19
           </span>
         </div>
       </div>
 
-      {/* Right side: Notifications & User Menu */}
-      <div className="flex items-center gap-3">
+      {/* Right side: Storefront Shortcut, Notifications & User Menu */}
+      <div className="flex items-center gap-2 sm:gap-3">
+        {/* Storefront Link */}
+        <Link
+          href="/"
+          className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors"
+        >
+          <Store className="h-3.5 w-3.5" />
+          <span>View Store ↗</span>
+        </Link>
         {/* Notifications Shortcut */}
         <Link
           href="/admin/notifications"

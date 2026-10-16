@@ -60,7 +60,7 @@ export function AdminPageHeader({
           )}
         </div>
 
-        {actions && <div className="flex items-center gap-3 shrink-0">{actions}</div>}
+        {actions && <div className="flex items-center gap-2 sm:gap-3 shrink-0 flex-wrap">{actions}</div>}
       </div>
     </div>
   )

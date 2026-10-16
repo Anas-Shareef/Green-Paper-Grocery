@@ -65,7 +65,7 @@ export function LoyaltyAdjustmentDialog({ customers }: LoyaltyAdjustmentDialogPr
 
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-xl space-y-4 animate-in fade-in zoom-in-95">
+          <div className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-xl space-y-4 animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="font-bold text-base text-foreground flex items-center gap-2">
                 <ShieldAlert className="h-4 w-4 text-amber-600" />

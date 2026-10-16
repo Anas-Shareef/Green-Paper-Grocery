@@ -168,18 +168,18 @@ export function AdminSidebar({
 
   return (
     <>
-      {/* Mobile backdrop */}
+      {/* Mobile and tablet backdrop */}
       {isOpen && (
         <div
           onClick={onClose}
-          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-xs md:hidden"
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-xs lg:hidden"
         />
       )}
 
       {/* Sidebar aside */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card transition-transform duration-200 md:static md:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card transition-transform duration-200 lg:static lg:translate-x-0 shadow-lg lg:shadow-none',
           isOpen ? 'translate-x-0' : '-translate-x-full'
         )}
       >
@@ -187,6 +187,7 @@ export function AdminSidebar({
         <div className="flex h-16 items-center justify-between px-6 border-b border-border">
           <Link
             href="/admin/dashboard"
+            onClick={onClose}
             className="flex items-center gap-2.5 font-bold text-foreground"
           >
             <div className="h-8 w-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-xs">
@@ -205,7 +206,8 @@ export function AdminSidebar({
           {onClose && (
             <button
               onClick={onClose}
-              className="p-1 rounded-md text-muted-foreground hover:text-foreground md:hidden"
+              className="p-1 rounded-md text-muted-foreground hover:text-foreground lg:hidden"
+              aria-label="Close sidebar"
             >
               <X className="h-5 w-5" />
             </button>

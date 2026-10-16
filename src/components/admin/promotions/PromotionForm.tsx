@@ -329,7 +329,7 @@ export function PromotionForm({ products, categories }: PromotionFormProps) {
       </div>
 
       {/* Action Buttons */}
-      <div className="flex items-center justify-between pt-4">
+      <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-4">
         <Link href="/admin/promotions">
           <Button variant="ghost" size="sm" className="text-xs">
             <ArrowLeft className="h-4 w-4 mr-1.5" /> Back to Promotions

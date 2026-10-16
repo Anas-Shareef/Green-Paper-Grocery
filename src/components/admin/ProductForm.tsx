@@ -676,7 +676,7 @@ export function ProductForm({
         </div>
 
         {/* Form Action Controls */}
-        <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+        <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-4 border-t border-border">
           <Button
             type="button"
             variant="outline"

@@ -135,7 +135,8 @@ export function InventoryMovementTable({
         </div>
       ) : (
         <div className="rounded-xl border border-border bg-card shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Desktop Table View */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-muted/40 text-muted-foreground border-b border-border font-medium">
                 <tr>
@@ -234,6 +235,68 @@ export function InventoryMovementTable({
                 })}
               </tbody>
             </table>
+          </div>
+
+          {/* Mobile Cards View */}
+          <div className="md:hidden divide-y divide-border">
+            {movements.map((m) => {
+              const qty = Number(m.quantity || 0)
+              const isPositive = qty > 0
+              const cfg = MOVEMENT_LABELS[m.movement_type] || {
+                label: m.movement_type,
+                bg: 'bg-zinc-100 dark:bg-zinc-800',
+                text: 'text-zinc-700 dark:text-zinc-300',
+              }
+
+              return (
+                <div key={m.id} className="p-3.5 space-y-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-semibold text-xs text-foreground">
+                        {m.product?.name || 'Deleted/Unknown Product'}
+                      </p>
+                      <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                        SKU: {m.product?.sku || '—'} • {new Date(m.created_at).toLocaleDateString()} {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border shrink-0 ${cfg.bg} ${cfg.text}`}
+                    >
+                      {isPositive ? (
+                        <TrendingUp className="h-2.5 w-2.5" />
+                      ) : (
+                        <TrendingDown className="h-2.5 w-2.5" />
+                      )}
+                      {cfg.label}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs pt-2 border-t border-border/60">
+                    <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>Ref: {m.reference_type || 'Manual'}</span>
+                      {m.unit_cost !== null && m.unit_cost !== undefined && (
+                        <span>• Cost: <CurrencyDisplay amount={m.unit_cost} /></span>
+                      )}
+                    </div>
+                    <span
+                      className={`font-mono font-bold text-xs ${
+                        isPositive
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      {isPositive ? `+${qty}` : qty} {m.product?.unit || 'pcs'}
+                    </span>
+                  </div>
+
+                  {m.notes && (
+                    <p className="text-[11px] text-muted-foreground italic bg-muted/30 px-2 py-1 rounded">
+                      {m.notes}
+                    </p>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

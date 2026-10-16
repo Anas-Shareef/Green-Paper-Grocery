@@ -50,7 +50,7 @@ export function OrderCancelDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="w-full max-w-md rounded-2xl bg-card border border-rose-500/30 p-6 shadow-xl space-y-5 animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-md rounded-2xl bg-card border border-rose-500/30 p-6 shadow-xl space-y-5 animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-3 border-b border-border">
           <div className="flex items-center gap-2 text-rose-600 font-bold text-sm">
             <AlertCircle className="h-4 w-4" />

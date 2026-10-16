@@ -208,7 +208,7 @@ export function PurchaseReceivingForm({ data }: PurchaseReceivingFormProps) {
             </p>
           </div>
 
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex flex-wrap items-center gap-4 text-xs">
             <div>
               <span className="text-muted-foreground">Total Ordered:</span>
               <p className="font-bold text-foreground font-mono">{summary.totalOrderedQty} units</p>
@@ -392,7 +392,7 @@ export function PurchaseReceivingForm({ data }: PurchaseReceivingFormProps) {
       {/* Confirmation Dialog with Consequence Transparency */}
       {confirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="w-full max-w-md bg-card border border-border rounded-2xl p-6 shadow-2xl space-y-4">
+          <div className="w-full max-w-md bg-card border border-border rounded-2xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center gap-3">
               <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400">
                 <CheckCircle className="h-5 w-5" />
