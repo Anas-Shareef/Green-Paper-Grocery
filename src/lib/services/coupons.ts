@@ -30,6 +30,7 @@ export async function getCoupons(params: {
   page: number
   limit: number
   totalPages: number
+  isPendingMigration?: boolean
 }> {
   const supabase = await createClient()
   const page = Math.max(1, params.page || 1)
@@ -53,7 +54,8 @@ export async function getCoupons(params: {
 
   if (error) {
     console.error('Error fetching coupons:', error)
-    return { coupons: [], total: 0, page, limit, totalPages: 0 }
+    const isPending = error.code === '42P01' || error.message.includes('relation') || error.message.includes('does not exist')
+    return { coupons: [], total: 0, page, limit, totalPages: 0, isPendingMigration: isPending }
   }
 
   const total = count || 0
@@ -65,6 +67,7 @@ export async function getCoupons(params: {
     page,
     limit,
     totalPages,
+    isPendingMigration: false,
   }
 }
 

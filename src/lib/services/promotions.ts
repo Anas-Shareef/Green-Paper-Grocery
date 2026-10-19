@@ -31,6 +31,7 @@ export async function getPromotions(params: PromotionFilterParams = {}): Promise
   page: number
   limit: number
   totalPages: number
+  isPendingMigration?: boolean
 }> {
   const supabase = await createClient()
   const page = Math.max(1, params.page || 1)
@@ -58,7 +59,8 @@ export async function getPromotions(params: PromotionFilterParams = {}): Promise
 
   if (error) {
     console.error('Error fetching promotions:', error)
-    return { promotions: [], total: 0, page, limit, totalPages: 0 }
+    const isPending = error.code === '42P01' || error.message.includes('relation') || error.message.includes('does not exist')
+    return { promotions: [], total: 0, page, limit, totalPages: 0, isPendingMigration: isPending }
   }
 
   const total = count || 0
@@ -70,6 +72,7 @@ export async function getPromotions(params: PromotionFilterParams = {}): Promise
     page,
     limit,
     totalPages,
+    isPendingMigration: false,
   }
 }
 

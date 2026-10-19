@@ -13,6 +13,7 @@ export const LOYALTY_CONFIG = {
 }
 
 export interface LoyaltyOverviewStats {
+  isPendingMigration?: boolean
   totalMembers: number
   pointsOutstanding: number
   pointsLifetimeEarned: number
@@ -205,9 +206,22 @@ export async function getLoyaltyOverview(): Promise<LoyaltyOverviewStats> {
   const supabase = await createClient()
 
   // 1. Total members and sums
-  const { data: accounts } = await supabase
+  const { data: accounts, error: accErr } = await supabase
     .from('customer_loyalty_accounts')
     .select('points_balance, lifetime_points_earned, lifetime_points_redeemed')
+
+  const isPending = accErr?.code === '42P01' || accErr?.message.includes('relation') || accErr?.message.includes('does not exist')
+  if (isPending) {
+    return {
+      isPendingMigration: true,
+      totalMembers: 0,
+      pointsOutstanding: 0,
+      pointsLifetimeEarned: 0,
+      pointsLifetimeRedeemed: 0,
+      estimatedOutstandingValueAed: 0,
+      recentTransactions: [],
+    }
+  }
 
   let pointsOutstanding = 0
   let pointsLifetimeEarned = 0

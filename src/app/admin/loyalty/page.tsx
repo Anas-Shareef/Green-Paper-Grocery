@@ -59,6 +59,17 @@ export default async function AdminLoyaltyPage() {
         }
       />
 
+      {overview.isPendingMigration && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 space-y-1.5 text-amber-900 dark:text-amber-200">
+          <div className="flex items-center gap-2 font-bold text-sm">
+            <span>⚠️ Database Migration Required (Phase 8 Commercial Schema)</span>
+          </div>
+          <p className="text-xs text-amber-800/80 dark:text-amber-300/80">
+            The customer loyalty database tables have not been created on the remote Supabase PostgreSQL instance yet. Please execute the version-controlled SQL script <code className="px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/10 font-mono text-[11px]">supabase/repair_pending_migrations.sql</code> in your Supabase SQL Editor to activate the loyalty rewards engine.
+          </p>
+        </div>
+      )}
+
       {/* KPI Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="rounded-2xl border border-border bg-card p-4 space-y-1">

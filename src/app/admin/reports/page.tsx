@@ -1,29 +1,33 @@
+import React from 'react'
+import { getReportsData } from '@/lib/services/reports'
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader'
-import { EmptyState } from '@/components/admin/EmptyState'
-import { BarChart3, Download } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { ReportsClient } from './ReportsClient'
 
-export default function AdminReportsPage() {
+export const metadata = {
+  title: 'Financial & Operational Reports | Baqqala Admin',
+}
+
+export default async function AdminReportsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    range?: 'today' | 'last_7_days' | 'last_30_days' | 'this_month' | 'all'
+  }>
+}) {
+  const resolvedParams = await searchParams
+  const range = resolvedParams.range || 'this_month'
+
+  const data = await getReportsData({ range })
+
   return (
     <div className="space-y-6">
       <AdminPageHeader
-        title="Financial & Inventory Analytics"
-        description="Comprehensive daily sales, product profitability, slow-moving items, and expense reports."
+        title="Financial & Operational Analytics"
+        description="Daily sales, order fulfillment metrics, operational expense breakdowns, and inventory valuation."
         breadcrumbs={[{ label: 'Admin', href: '/admin/dashboard' }, { label: 'Reports' }]}
-        actions={
-          <Button disabled className="opacity-60 cursor-not-allowed inline-flex items-center gap-2">
-            <Download className="h-4 w-4" /> Export Report (Phase 9)
-          </Button>
-        }
       />
 
-      <div className="rounded-xl border border-border bg-card p-6">
-        <EmptyState
-          title="Advanced Analytics & Reports — Phase 9"
-          description="Detailed financial reports, margin breakdowns, customer lifetime value analytics, and slow-moving inventory reports will be activated in Phase 9."
-          icon={BarChart3}
-        />
-      </div>
+      <ReportsClient data={data} currentRange={range} />
     </div>
   )
 }

@@ -111,6 +111,8 @@ export async function mutateStockAtomic(params: MutateStockParams): Promise<numb
     userId = user?.id
   }
 
+  let newStockVal: number | null = null
+
   const { data: newStock, error } = await supabase.rpc('mutate_stock_atomic', {
     p_product_id: params.productId,
     p_quantity_change: params.quantityChange,
@@ -123,12 +125,56 @@ export async function mutateStockAtomic(params: MutateStockParams): Promise<numb
     p_allow_negative: params.allowNegative ?? false,
   })
 
-  if (error) {
-    console.error('Failed atomic stock mutation:', error)
-    throw new Error(`Inventory mutation failed: ${error.message}`)
+  if (!error && newStock !== null && newStock !== undefined) {
+    newStockVal = Number(newStock)
+  } else {
+    // Resilient fallback if RPC not present in schema cache
+    const { data: prod, error: pErr } = await supabase
+      .from('products')
+      .select('stock_quantity, purchase_cost')
+      .eq('id', params.productId)
+      .single()
+
+    if (pErr || !prod) {
+      throw new Error(`Product not found: ${pErr?.message || params.productId}`)
+    }
+
+    const currStock = Number(prod.stock_quantity) || 0
+    const calculated = currStock + params.quantityChange
+
+    if (!params.allowNegative && calculated < 0) {
+      throw new Error(`Insufficient stock for product. Available: ${currStock}, Requested change: ${params.quantityChange}`)
+    }
+
+    const { error: updErr } = await supabase
+      .from('products')
+      .update({
+        stock_quantity: calculated,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', params.productId)
+
+    if (updErr) {
+      throw new Error(`Failed to update product stock: ${updErr.message}`)
+    }
+
+    await supabase.from('inventory_movements').insert({
+      product_id: params.productId,
+      movement_type: params.movementType,
+      quantity: params.quantityChange,
+      reference_type: params.referenceType ?? null,
+      reference_id: params.referenceId ?? null,
+      unit_cost: params.unitCost ?? prod.purchase_cost ?? null,
+      notes: params.notes ?? null,
+      created_by: userId ?? null,
+      previous_stock: currStock,
+      resulting_stock: calculated,
+    })
+
+    newStockVal = calculated
   }
 
-  return Number(newStock)
+  return Number(newStockVal)
 }
 
 /**

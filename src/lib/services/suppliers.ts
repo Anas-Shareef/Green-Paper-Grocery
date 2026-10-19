@@ -97,7 +97,7 @@ export async function getSuppliers(params: SupplierListParams = {}): Promise<Sup
   if (params.search?.trim()) {
     const term = `%${params.search.trim()}%`
     query = query.or(
-      `name.ilike.${term},supplier_code.ilike.${term},contact_person.ilike.${term},phone.ilike.${term}`
+      `name.ilike.${term},contact_person.ilike.${term},phone.ilike.${term},email.ilike.${term}`
     )
   }
 
@@ -336,38 +336,55 @@ export async function createSupplier(input: CreateSupplierInput): Promise<Suppli
     data: { user },
   } = await supabase.auth.getUser()
 
-  const insertPayload = {
-    supplier_code: supplierCode,
+  const insertPayload: Record<string, unknown> = {
     name: input.name.trim(),
     contact_person: input.contact_person?.trim() || null,
     phone: input.phone?.trim() || null,
     whatsapp: input.whatsapp?.trim() || null,
     email: input.email?.trim() || null,
     address: input.address?.trim() || null,
+    notes: input.notes?.trim() || null,
+    is_active: true,
+  }
+
+  let data: Supplier | null = null
+  const extendedPayload = {
+    ...insertPayload,
+    supplier_code: supplierCode,
     tax_identifier: input.tax_identifier?.trim() || null,
     payment_terms: input.payment_terms || '30 days',
     credit_limit: Math.max(0, Number(input.credit_limit) || 0),
-    notes: input.notes?.trim() || null,
-    is_active: true,
     created_by: user?.id || null,
   }
 
-  const { data, error } = await supabase
+  const { data: extData, error: extError } = await supabase
     .from('suppliers')
-    .insert(insertPayload)
+    .insert(extendedPayload as any)
     .select()
     .single()
 
-  if (error) {
-    console.error('Error creating supplier:', error)
-    throw new Error(`Failed to create supplier: ${error.message}`)
+  if (!extError && extData) {
+    data = extData as Supplier
+  } else {
+    // Fall back to guaranteed core schema columns
+    const { data: coreData, error: coreError } = await supabase
+      .from('suppliers')
+      .insert(insertPayload as any)
+      .select()
+      .single()
+
+    if (coreError || !coreData) {
+      console.error('Error creating supplier:', coreError || extError)
+      throw new Error(`Failed to create supplier: ${coreError?.message || extError?.message}`)
+    }
+    data = coreData as Supplier
   }
 
   await logAuditEvent({
     action: 'supplier.create',
     entityType: 'supplier',
     entityId: data.id,
-    newValues: insertPayload,
+    newValues: insertPayload as unknown as import('@/types/database.types').Json,
   })
 
   return data as Supplier
@@ -387,33 +404,50 @@ export async function updateSupplier(id: string, input: UpdateSupplierInput): Pr
     data: { user },
   } = await supabase.auth.getUser()
 
-  const updatePayload: import('@/types/database.types').Database['public']['Tables']['suppliers']['Update'] = {
-    updated_by: user?.id || null,
+  const coreUpdatePayload: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
   }
 
-  if (input.name !== undefined) updatePayload.name = input.name.trim()
-  if (input.contact_person !== undefined) updatePayload.contact_person = input.contact_person?.trim() || null
-  if (input.phone !== undefined) updatePayload.phone = input.phone?.trim() || null
-  if (input.whatsapp !== undefined) updatePayload.whatsapp = input.whatsapp?.trim() || null
-  if (input.email !== undefined) updatePayload.email = input.email?.trim() || null
-  if (input.address !== undefined) updatePayload.address = input.address?.trim() || null
-  if (input.tax_identifier !== undefined) updatePayload.tax_identifier = input.tax_identifier?.trim() || null
-  if (input.payment_terms !== undefined) updatePayload.payment_terms = input.payment_terms
-  if (input.credit_limit !== undefined) updatePayload.credit_limit = Math.max(0, Number(input.credit_limit) || 0)
-  if (input.notes !== undefined) updatePayload.notes = input.notes?.trim() || null
-  if (input.is_active !== undefined) updatePayload.is_active = input.is_active
+  if (input.name !== undefined) coreUpdatePayload.name = input.name.trim()
+  if (input.contact_person !== undefined) coreUpdatePayload.contact_person = input.contact_person?.trim() || null
+  if (input.phone !== undefined) coreUpdatePayload.phone = input.phone?.trim() || null
+  if (input.whatsapp !== undefined) coreUpdatePayload.whatsapp = input.whatsapp?.trim() || null
+  if (input.email !== undefined) coreUpdatePayload.email = input.email?.trim() || null
+  if (input.address !== undefined) coreUpdatePayload.address = input.address?.trim() || null
+  if (input.notes !== undefined) coreUpdatePayload.notes = input.notes?.trim() || null
+  if (input.is_active !== undefined) coreUpdatePayload.is_active = input.is_active
 
-  const { data, error } = await supabase
+  const extendedUpdatePayload: Record<string, unknown> = {
+    ...coreUpdatePayload,
+    updated_by: user?.id || null,
+  }
+  if (input.tax_identifier !== undefined) extendedUpdatePayload.tax_identifier = input.tax_identifier?.trim() || null
+  if (input.payment_terms !== undefined) extendedUpdatePayload.payment_terms = input.payment_terms
+  if (input.credit_limit !== undefined) extendedUpdatePayload.credit_limit = Math.max(0, Number(input.credit_limit) || 0)
+
+  let updatedSupplier: Supplier | null = null
+  const { data: extData, error: extError } = await supabase
     .from('suppliers')
-    .update(updatePayload)
+    .update(extendedUpdatePayload as any)
     .eq('id', id)
     .select()
     .single()
 
-  if (error) {
-    console.error('Error updating supplier:', error)
-    throw new Error(`Failed to update supplier: ${error.message}`)
+  if (!extError && extData) {
+    updatedSupplier = extData as Supplier
+  } else {
+    const { data: coreData, error: coreError } = await supabase
+      .from('suppliers')
+      .update(coreUpdatePayload as any)
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (coreError || !coreData) {
+      console.error('Error updating supplier:', coreError || extError)
+      throw new Error(`Failed to update supplier: ${coreError?.message || extError?.message}`)
+    }
+    updatedSupplier = coreData as Supplier
   }
 
   await logAuditEvent({
@@ -421,10 +455,10 @@ export async function updateSupplier(id: string, input: UpdateSupplierInput): Pr
     entityType: 'supplier',
     entityId: id,
     oldValues: existing ? (existing as unknown as import('@/types/database.types').Json) : undefined,
-    newValues: updatePayload as unknown as import('@/types/database.types').Json,
+    newValues: (updatedSupplier || coreUpdatePayload) as unknown as import('@/types/database.types').Json,
   })
 
-  return data as Supplier
+  return updatedSupplier as Supplier
 }
 
 /**

@@ -306,20 +306,27 @@ export async function getDashboardSummary(
     .select('*', { count: 'exact', head: true })
     .in('status', ['ordered', 'partially_received'])
 
-  // B. Supplier payables & overdue invoices
+  // B. Supplier payables & overdue invoices (guarded if table is pending migration)
   const todayStr = new Date().toISOString().split('T')[0]
-  const { data: openInvoices } = await supabase
-    .from('supplier_invoices')
-    .select('outstanding_amount, due_date, status')
-    .in('status', ['unpaid', 'partially_paid', 'overdue'])
-
   let outstandingPayables = 0
   let overdueInvoicesCount = 0
-  for (const inv of openInvoices || []) {
-    outstandingPayables += Number(inv.outstanding_amount) || 0
-    if (inv.status === 'overdue' || (inv.due_date < todayStr && Number(inv.outstanding_amount) > 0)) {
-      overdueInvoicesCount += 1
+  try {
+    const { data: openInvoices, error: invError } = await supabase
+      .from('supplier_invoices')
+      .select('outstanding_amount, due_date, status')
+      .in('status', ['unpaid', 'partially_paid', 'overdue'])
+
+    if (!invError && openInvoices) {
+      for (const inv of openInvoices) {
+        outstandingPayables += Number(inv.outstanding_amount) || 0
+        if (inv.status === 'overdue' || (inv.due_date < todayStr && Number(inv.outstanding_amount) > 0)) {
+          overdueInvoicesCount += 1
+        }
+      }
     }
+  } catch {
+    outstandingPayables = 0
+    overdueInvoicesCount = 0
   }
 
   // C. Total purchases in date range

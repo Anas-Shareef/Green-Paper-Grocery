@@ -1,0 +1,4924 @@
+-- ==============================================================================
+-- BAQQALA GROCERY — CONSOLIDATED PENDING DATABASE MIGRATION SCRIPT
+-- Project Ref: lgzqryxdwgmzuesjeukq
+-- Safe, idempotent migration for Missing Tables, Missing Columns, and RPCs
+-- ==============================================================================
+
+
+-- >>> FILE: 20261006000000_pre_phase5_integrity_patch.sql >>>
+-- ==============================================================================
+-- BAQQALA GROCERY OPERATING SYSTEM & CUSTOMER PLATFORM
+-- Pre-Phase-5 Data Integrity & Concurrency Hardening Patch
+-- Zone 19, Abu Dhabi
+-- ==============================================================================
+
+-- 1. HARDEN INVENTORY MOVEMENTS LEDGER
+-- Add previous_stock and resulting_stock columns to record immutable balance snapshots
+ALTER TABLE public.inventory_movements
+    ADD COLUMN IF NOT EXISTS previous_stock NUMERIC(12, 3),
+    ADD COLUMN IF NOT EXISTS resulting_stock NUMERIC(12, 3);
+
+-- Restrict RLS on inventory_movements:
+-- Direct INSERT, UPDATE, and DELETE by clients are DENIED.
+-- Only trusted database functions (mutate_stock_atomic) running as SECURITY DEFINER
+-- or service_role can create ledger records.
+DROP POLICY IF EXISTS "inventory_movements_insert" ON public.inventory_movements;
+DROP POLICY IF EXISTS "inventory_movements_update" ON public.inventory_movements;
+DROP POLICY IF EXISTS "inventory_movements_delete" ON public.inventory_movements;
+
+DROP POLICY IF EXISTS "inventory_movements_select" ON public.inventory_movements;
+CREATE POLICY "inventory_movements_select" ON public.inventory_movements
+    FOR SELECT USING (public.is_staff());
+
+DROP POLICY IF EXISTS "inventory_movements_insert_service_only" ON public.inventory_movements;
+CREATE POLICY "inventory_movements_insert_service_only" ON public.inventory_movements
+    FOR INSERT TO service_role WITH CHECK (true);
+
+
+-- 2. HARDEN AUDIT LOGS
+-- Immutable append-only log: direct client INSERT, UPDATE, and DELETE are strictly DENIED.
+-- Inserting into audit_logs can only happen via trusted SECURITY DEFINER functions
+-- (like log_audit_event_atomic, mutate_stock_atomic, etc.) or service_role.
+DROP POLICY IF EXISTS "audit_logs_insert" ON public.audit_logs;
+DROP POLICY IF EXISTS "audit_logs_update" ON public.audit_logs;
+DROP POLICY IF EXISTS "audit_logs_delete" ON public.audit_logs;
+
+-- Helper: has_permission function for SQL-level permission checks
+CREATE OR REPLACE FUNCTION public.has_permission(p_permission TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_role public.user_role;
+BEGIN
+    SELECT role INTO v_role
+    FROM public.profiles
+    WHERE id = auth.uid() AND is_active = true;
+
+    IF v_role IS NULL THEN
+        RETURN false;
+    END IF;
+
+    IF v_role IN ('owner', 'admin') THEN
+        RETURN true;
+    END IF;
+
+    IF v_role = 'staff' AND p_permission NOT IN (
+        'expenses.view', 'expenses.create', 'expenses.edit',
+        'reports.view', 'settings.edit', 'users.manage', 'audit.view'
+    ) THEN
+        RETURN true;
+    END IF;
+
+    RETURN false;
+END;
+$$;
+
+DROP POLICY IF EXISTS "audit_logs_select" ON public.audit_logs;
+CREATE POLICY "audit_logs_select" ON public.audit_logs
+    FOR SELECT USING (public.is_admin());
+
+DROP POLICY IF EXISTS "audit_logs_insert_service_only" ON public.audit_logs;
+CREATE POLICY "audit_logs_insert_service_only" ON public.audit_logs
+    FOR INSERT TO service_role WITH CHECK (true);
+
+
+-- 3. HARDEN PRODUCT PRICE HISTORY
+-- Guarantee that there is NEVER more than one active price record per product
+CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_single_active
+    ON public.product_price_history(product_id)
+    WHERE effective_until IS NULL;
+
+-- Disallow arbitrary direct client INSERT, UPDATE, and DELETE on historical price records
+DROP POLICY IF EXISTS "price_history_modify" ON public.product_price_history;
+DROP POLICY IF EXISTS "price_history_insert" ON public.product_price_history;
+DROP POLICY IF EXISTS "price_history_update" ON public.product_price_history;
+DROP POLICY IF EXISTS "price_history_delete" ON public.product_price_history;
+DROP POLICY IF EXISTS "price_history_close_only" ON public.product_price_history;
+
+DROP POLICY IF EXISTS "price_history_select" ON public.product_price_history;
+CREATE POLICY "price_history_select" ON public.product_price_history
+    FOR SELECT USING (public.is_staff());
+
+CREATE POLICY "price_history_insert_service_only" ON public.product_price_history
+    FOR INSERT TO service_role WITH CHECK (true);
+
+CREATE POLICY "price_history_update_service_only" ON public.product_price_history
+    FOR UPDATE TO service_role USING (true) WITH CHECK (true);
+
+
+-- 4. HARDEN INVENTORY COUNTS & ITEMS CONCURRENCY
+-- Extend inventory_count_items with completion and interim concurrency tracking columns
+ALTER TABLE public.inventory_count_items
+    ADD COLUMN IF NOT EXISTS system_quantity_at_completion NUMERIC(12, 3),
+    ADD COLUMN IF NOT EXISTS interim_movement_quantity NUMERIC(12, 3),
+    ADD COLUMN IF NOT EXISTS actual_reconciliation_difference NUMERIC(12, 3),
+    ADD COLUMN IF NOT EXISTS resulting_stock NUMERIC(12, 3),
+    ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
+-- Prevent duplicate lines for the same product in a single stocktake session
+CREATE UNIQUE INDEX IF NOT EXISTS idx_count_items_unique_product
+    ON public.inventory_count_items(inventory_count_id, product_id);
+
+
+-- 5. TRUSTED AUDIT LOGGING FUNCTION
+-- Generates audit records with verified auth.uid() actor
+CREATE OR REPLACE FUNCTION public.log_audit_event_atomic(
+    p_action TEXT,
+    p_entity_type TEXT,
+    p_entity_id UUID DEFAULT NULL,
+    p_old_values JSONB DEFAULT NULL,
+    p_new_values JSONB DEFAULT NULL
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_actor_id UUID;
+    v_log_id UUID;
+BEGIN
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Permission denied: Staff access required for audit logging';
+    END IF;
+
+    v_actor_id := auth.uid();
+
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values
+    )
+    VALUES (
+        v_actor_id,
+        p_action,
+        p_entity_type,
+        p_entity_id,
+        p_old_values,
+        p_new_values
+    )
+    RETURNING id INTO v_log_id;
+
+    RETURN v_log_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.log_audit_event_atomic(TEXT, TEXT, UUID, JSONB, JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.log_audit_event_atomic(TEXT, TEXT, UUID, JSONB, JSONB) FROM anon;
+GRANT EXECUTE ON FUNCTION public.log_audit_event_atomic(TEXT, TEXT, UUID, JSONB, JSONB) TO authenticated, service_role;
+
+
+-- 6. UPDATE MUTATE_STOCK_ATOMIC TO LOG PREVIOUS AND RESULTING BALANCES
+CREATE OR REPLACE FUNCTION public.mutate_stock_atomic(
+    p_product_id UUID,
+    p_quantity_change NUMERIC(12, 3),
+    p_movement_type inventory_movement_type,
+    p_reference_type TEXT DEFAULT NULL,
+    p_reference_id UUID DEFAULT NULL,
+    p_unit_cost NUMERIC(12, 2) DEFAULT NULL,
+    p_notes TEXT DEFAULT NULL,
+    p_user_id UUID DEFAULT NULL,
+    p_allow_negative BOOLEAN DEFAULT false
+)
+RETURNS NUMERIC(12, 3)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_current_stock NUMERIC(12, 3);
+    v_reorder_level NUMERIC(12, 3);
+    v_product_name TEXT;
+    v_new_stock NUMERIC(12, 3);
+    v_actual_cost NUMERIC(12, 2);
+    v_effective_user_id UUID;
+BEGIN
+    -- 1. Authorization verification
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Permission denied: Staff access required for stock mutation';
+    END IF;
+
+    -- 2. Input validation
+    IF p_product_id IS NULL THEN
+        RAISE EXCEPTION 'Product ID cannot be null';
+    END IF;
+
+    IF p_quantity_change IS NULL OR p_quantity_change = 0 THEN
+        RAISE EXCEPTION 'Quantity change must be non-zero';
+    END IF;
+
+    IF p_movement_type IS NULL THEN
+        RAISE EXCEPTION 'Movement type is required';
+    END IF;
+
+    -- Validate movement direction
+    IF p_movement_type IN ('purchase', 'customer_return', 'opening_stock') AND p_quantity_change < 0 THEN
+        RAISE EXCEPTION 'Movement type % requires a positive quantity change', p_movement_type;
+    ELSIF p_movement_type IN ('sale', 'supplier_return', 'damaged', 'expired') AND p_quantity_change > 0 THEN
+        RAISE EXCEPTION 'Movement type % requires a negative quantity change', p_movement_type;
+    END IF;
+
+    -- Derive and verify authenticated actor
+    IF auth.uid() IS NOT NULL THEN
+        IF p_user_id IS NOT NULL AND p_user_id <> auth.uid() THEN
+            RAISE EXCEPTION 'Security violation: Actor ID mismatch (supplied %, authenticated %)', p_user_id, auth.uid();
+        END IF;
+        v_effective_user_id := auth.uid();
+    ELSIF current_user = 'service_role' OR current_setting('request.jwt.claim.role', true) = 'service_role' THEN
+        v_effective_user_id := p_user_id;
+    ELSE
+        RAISE EXCEPTION 'Authentication required: Action must be invoked by an authenticated user';
+    END IF;
+
+    -- 3. Row lock on target product
+    SELECT name, stock_quantity, reorder_level, purchase_cost
+    INTO v_product_name, v_current_stock, v_reorder_level, v_actual_cost
+    FROM public.products
+    WHERE id = p_product_id AND archived_at IS NULL
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Product % not found or has been archived', p_product_id;
+    END IF;
+
+    -- 4. Calculate projected stock and enforce non-negative constraint
+    v_new_stock := v_current_stock + p_quantity_change;
+
+    IF v_new_stock < 0 AND NOT p_allow_negative THEN
+        RAISE EXCEPTION 'Insufficient stock for "%": current % units, requested reduction of % units would result in % units.',
+            v_product_name, v_current_stock, abs(p_quantity_change), v_new_stock;
+    END IF;
+
+    -- 5. Mutate product stock
+    UPDATE public.products
+    SET stock_quantity = v_new_stock,
+        updated_at = now()
+    WHERE id = p_product_id;
+
+    -- 6. Insert inventory movement audit record with immutable balances
+    INSERT INTO public.inventory_movements (
+        product_id,
+        movement_type,
+        quantity,
+        previous_stock,
+        resulting_stock,
+        reference_type,
+        reference_id,
+        unit_cost,
+        notes,
+        created_by
+    )
+    VALUES (
+        p_product_id,
+        p_movement_type,
+        p_quantity_change,
+        v_current_stock,
+        v_new_stock,
+        p_reference_type,
+        p_reference_id,
+        COALESCE(p_unit_cost, v_actual_cost),
+        p_notes,
+        v_effective_user_id
+    );
+
+    -- 7. Insert system audit log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values
+    )
+    VALUES (
+        v_effective_user_id,
+        'inventory.stock_mutated',
+        'product',
+        p_product_id,
+        jsonb_build_object('stock_quantity', v_current_stock),
+        jsonb_build_object(
+            'stock_quantity', v_new_stock,
+            'change', p_quantity_change,
+            'movement_type', p_movement_type,
+            'reference_type', p_reference_type,
+            'notes', p_notes
+        )
+    );
+
+    -- 8. Dispatch notifications strictly on meaningful threshold transitions
+    IF v_new_stock = 0 AND v_current_stock > 0 THEN
+        INSERT INTO public.notifications (
+            title,
+            message,
+            type,
+            entity_type,
+            entity_id,
+            link
+        ) VALUES (
+            'Out of Stock Alert',
+            format('Product "%s" is now completely out of stock.', v_product_name),
+            'warning',
+            'product',
+            p_product_id,
+            '/admin/inventory'
+        );
+    ELSIF v_new_stock > 0 AND v_new_stock <= v_reorder_level AND v_current_stock > v_reorder_level THEN
+        INSERT INTO public.notifications (
+            title,
+            message,
+            type,
+            entity_type,
+            entity_id,
+            link
+        ) VALUES (
+            'Low Stock Alert',
+            format('Product "%s" reached low stock (%s units remaining, reorder level is %s).', v_product_name, v_new_stock, v_reorder_level),
+            'warning',
+            'product',
+            p_product_id,
+            '/admin/inventory'
+        );
+    END IF;
+
+    RETURN v_new_stock;
+END;
+$$;
+
+
+-- 7. ATOMIC STOCKTAKE RECONCILIATION WITH CONCURRENCY PROTECTION & CORRECT MATHEMATICS
+-- Preserves all legitimate interim movements that occurred between snapshot and completion.
+-- Variance applied against current stock is: actual_reconciliation_difference = counted_quantity - system_quantity_at_completion.
+CREATE OR REPLACE FUNCTION public.complete_inventory_count_atomic(
+    p_count_id UUID,
+    p_items JSONB,
+    p_user_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_count_record RECORD;
+    v_item JSONB;
+    v_product_id UUID;
+    v_counted_qty NUMERIC(12, 3);
+    v_snapshot_qty NUMERIC(12, 3);
+    v_reason TEXT;
+    v_current_stock NUMERIC(12, 3);
+    v_reorder_level NUMERIC(12, 3);
+    v_actual_cost NUMERIC(12, 2);
+    v_product_name TEXT;
+    v_interim_movement NUMERIC(12, 3);
+    v_reconciliation_diff NUMERIC(12, 3);
+    v_final_stock NUMERIC(12, 3);
+    v_effective_user_id UUID;
+    v_reconciled_count INTEGER := 0;
+    v_variance_count INTEGER := 0;
+    v_now TIMESTAMPTZ := now();
+BEGIN
+    -- 1. Authorization & actor verification
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Permission denied: Staff access required for stock reconciliation';
+    END IF;
+
+    IF auth.uid() IS NOT NULL THEN
+        IF p_user_id IS NOT NULL AND p_user_id <> auth.uid() THEN
+            RAISE EXCEPTION 'Security violation: Actor ID mismatch (supplied %, authenticated %)', p_user_id, auth.uid();
+        END IF;
+        v_effective_user_id := auth.uid();
+    ELSIF current_user = 'service_role' OR current_setting('request.jwt.claim.role', true) = 'service_role' THEN
+        v_effective_user_id := p_user_id;
+    ELSE
+        RAISE EXCEPTION 'Authentication required: Operation must be invoked by an authenticated user';
+    END IF;
+
+    -- 2. Lock the inventory count session FOR UPDATE
+    SELECT id, reference, status, started_at
+    INTO v_count_record
+    FROM public.inventory_counts
+    WHERE id = p_count_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Inventory count session % not found', p_count_id;
+    END IF;
+
+    IF v_count_record.status = 'completed' THEN
+        RAISE EXCEPTION 'Inventory count % is already completed and immutable', v_count_record.reference;
+    END IF;
+
+    IF v_count_record.status = 'cancelled' THEN
+        RAISE EXCEPTION 'Inventory count % was cancelled and cannot be reconciled', v_count_record.reference;
+    END IF;
+
+    -- 3. Process each counted item atomically
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        v_product_id := COALESCE(v_item->>'productId', v_item->>'product_id')::UUID;
+        v_counted_qty := COALESCE(v_item->>'countedQuantity', v_item->>'counted_quantity')::NUMERIC(12, 3);
+        v_snapshot_qty := COALESCE(v_item->>'systemQuantity', v_item->>'system_quantity')::NUMERIC(12, 3);
+        v_reason := COALESCE(v_item->>'reason', 'Physical stocktake reconciliation');
+
+        IF v_counted_qty < 0 THEN
+            RAISE EXCEPTION 'Counted quantity cannot be negative for product %', v_product_id;
+        END IF;
+
+        -- Row lock on product to prevent concurrent race conditions
+        SELECT name, stock_quantity, reorder_level, purchase_cost
+        INTO v_product_name, v_current_stock, v_reorder_level, v_actual_cost
+        FROM public.products
+        WHERE id = v_product_id AND archived_at IS NULL
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Product % not found or has been archived', v_product_id;
+        END IF;
+
+        -- Interim movements that occurred between snapshot and completion: (Current - Snapshot)
+        v_interim_movement := v_current_stock - v_snapshot_qty;
+
+        -- Actual physical reconciliation difference against CURRENT stock: (Counted - Current)
+        v_reconciliation_diff := v_counted_qty - v_current_stock;
+
+        -- Final resulting stock equals the physical count reality
+        v_final_stock := v_current_stock + v_reconciliation_diff;
+
+        IF v_final_stock < 0 THEN
+            RAISE EXCEPTION 'Stock reconciliation would cause negative stock (% units) for "%". Interim movements: %',
+                v_final_stock, v_product_name, v_interim_movement;
+        END IF;
+
+        -- Require explanation for material discrepancies
+        IF v_reconciliation_diff <> 0 AND (v_reason IS NULL OR trim(v_reason) = '') THEN
+            RAISE EXCEPTION 'A variance explanation is required for product "%" (Discrepancy: %)',
+                v_product_name, v_reconciliation_diff;
+        END IF;
+
+        -- If physical variance against current stock is detected, apply atomic adjustment
+        IF v_reconciliation_diff <> 0 THEN
+            UPDATE public.products
+            SET stock_quantity = v_final_stock,
+                updated_at = v_now
+            WHERE id = v_product_id;
+
+            INSERT INTO public.inventory_movements (
+                product_id,
+                movement_type,
+                quantity,
+                previous_stock,
+                resulting_stock,
+                reference_type,
+                reference_id,
+                unit_cost,
+                notes,
+                created_by
+            )
+            VALUES (
+                v_product_id,
+                'count_reconciliation',
+                v_reconciliation_diff,
+                v_current_stock,
+                v_final_stock,
+                'inventory_count',
+                p_count_id,
+                v_actual_cost,
+                format('Stocktake reconciliation (%s) - Variance: %s (Interim movement: %s, Snapshot: %s, Current: %s). Reason: %s',
+                    v_count_record.reference, v_reconciliation_diff, v_interim_movement, v_snapshot_qty, v_current_stock, v_reason),
+                v_effective_user_id
+            );
+
+            v_variance_count := v_variance_count + 1;
+        END IF;
+
+        -- Record line item with full audit snapshot
+        INSERT INTO public.inventory_count_items (
+            inventory_count_id,
+            product_id,
+            system_quantity,
+            counted_quantity,
+            difference,
+            system_quantity_at_completion,
+            interim_movement_quantity,
+            actual_reconciliation_difference,
+            resulting_stock,
+            completed_at,
+            reason
+        )
+        VALUES (
+            p_count_id,
+            v_product_id,
+            v_snapshot_qty,
+            v_counted_qty,
+            (v_counted_qty - v_snapshot_qty),
+            v_current_stock,
+            v_interim_movement,
+            v_reconciliation_diff,
+            v_final_stock,
+            v_now,
+            v_reason
+        )
+        ON CONFLICT (inventory_count_id, product_id) DO UPDATE SET
+            system_quantity = EXCLUDED.system_quantity,
+            counted_quantity = EXCLUDED.counted_quantity,
+            difference = EXCLUDED.difference,
+            system_quantity_at_completion = EXCLUDED.system_quantity_at_completion,
+            interim_movement_quantity = EXCLUDED.interim_movement_quantity,
+            actual_reconciliation_difference = EXCLUDED.actual_reconciliation_difference,
+            resulting_stock = EXCLUDED.resulting_stock,
+            completed_at = EXCLUDED.completed_at,
+            reason = EXCLUDED.reason;
+
+        v_reconciled_count := v_reconciled_count + 1;
+    END LOOP;
+
+    -- 4. Mark inventory count session as completed and immutable
+    UPDATE public.inventory_counts
+    SET status = 'completed',
+        completed_at = v_now
+    WHERE id = p_count_id;
+
+    -- 5. Record system audit log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values
+    )
+    VALUES (
+        v_effective_user_id,
+        'inventory.count_completed',
+        'inventory_count',
+        p_count_id,
+        jsonb_build_object('status', 'in_progress'),
+        jsonb_build_object(
+            'status', 'completed',
+            'reference', v_count_record.reference,
+            'items_reconciled', v_reconciled_count,
+            'variances_adjusted', v_variance_count,
+            'completed_at', v_now
+        )
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'count_id', p_count_id,
+        'reference', v_count_record.reference,
+        'items_reconciled', v_reconciled_count,
+        'variances_adjusted', v_variance_count
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.complete_inventory_count_atomic(UUID, JSONB, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.complete_inventory_count_atomic(UUID, JSONB, UUID) FROM anon;
+GRANT EXECUTE ON FUNCTION public.complete_inventory_count_atomic(UUID, JSONB, UUID) TO authenticated, service_role;
+
+
+-- 8. ATOMIC PRODUCT CREATION WITH OPENING STOCK & PRICE HISTORY
+CREATE OR REPLACE FUNCTION public.create_product_atomic(
+    p_product_data JSONB,
+    p_user_id UUID DEFAULT NULL
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_product_id UUID;
+    v_name TEXT;
+    v_slug TEXT;
+    v_sku TEXT;
+    v_barcode TEXT;
+    v_category_id UUID;
+    v_unit TEXT;
+    v_purchase_cost NUMERIC(12, 2);
+    v_selling_price NUMERIC(12, 2);
+    v_promo_price NUMERIC(12, 2);
+    v_minimum_selling_price NUMERIC(12, 2);
+    v_opening_stock NUMERIC(12, 3);
+    v_reorder_level NUMERIC(12, 3);
+    v_image_url TEXT;
+    v_description TEXT;
+    v_brand TEXT;
+    v_is_active BOOLEAN;
+    v_is_featured BOOLEAN;
+    v_effective_user_id UUID;
+BEGIN
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Permission denied: Staff access required to create products';
+    END IF;
+
+    -- Derive and verify authenticated actor
+    IF auth.uid() IS NOT NULL THEN
+        IF p_user_id IS NOT NULL AND p_user_id <> auth.uid() THEN
+            RAISE EXCEPTION 'Security violation: Actor ID mismatch (supplied %, authenticated %)', p_user_id, auth.uid();
+        END IF;
+        v_effective_user_id := auth.uid();
+    ELSIF current_user = 'service_role' OR current_setting('request.jwt.claim.role', true) = 'service_role' THEN
+        v_effective_user_id := p_user_id;
+    ELSE
+        RAISE EXCEPTION 'Authentication required: Action must be invoked by an authenticated user';
+    END IF;
+
+    -- Extract and validate fields
+    v_name := trim(p_product_data->>'name');
+    v_sku := upper(trim(p_product_data->>'sku'));
+    v_barcode := nullif(trim(p_product_data->>'barcode'), '');
+    v_slug := p_product_data->>'slug';
+    v_category_id := nullif(p_product_data->>'category_id', '')::UUID;
+    v_unit := COALESCE(p_product_data->>'unit', 'piece');
+    v_purchase_cost := COALESCE((p_product_data->>'purchase_cost')::NUMERIC(12, 2), 0.00);
+    v_selling_price := COALESCE((p_product_data->>'selling_price')::NUMERIC(12, 2), 0.00);
+    v_promo_price := nullif(p_product_data->>'promo_price', '')::NUMERIC(12, 2);
+    v_minimum_selling_price := COALESCE((p_product_data->>'minimum_selling_price')::NUMERIC(12, 2), 0.00);
+    v_opening_stock := COALESCE((p_product_data->>'opening_stock')::NUMERIC(12, 3), 0.000);
+    v_reorder_level := COALESCE((p_product_data->>'reorder_level')::NUMERIC(12, 3), 5.000);
+    v_image_url := nullif(p_product_data->>'image_url', '');
+    v_description := nullif(p_product_data->>'description', '');
+    v_brand := nullif(p_product_data->>'brand', '');
+    v_is_active := COALESCE((p_product_data->>'is_active')::BOOLEAN, true);
+    v_is_featured := COALESCE((p_product_data->>'is_featured')::BOOLEAN, false);
+
+    IF v_name IS NULL OR v_name = '' THEN
+        RAISE EXCEPTION 'Product name is required';
+    END IF;
+    IF v_sku IS NULL OR v_sku = '' THEN
+        RAISE EXCEPTION 'SKU is required';
+    END IF;
+
+    -- Validate pricing guardrails
+    IF v_purchase_cost < 0 THEN
+        RAISE EXCEPTION 'Purchase cost cannot be negative';
+    END IF;
+    IF v_minimum_selling_price < 0 THEN
+        RAISE EXCEPTION 'Minimum selling price cannot be negative';
+    END IF;
+    IF v_selling_price < v_minimum_selling_price THEN
+        RAISE EXCEPTION 'Selling price cannot be lower than minimum allowed price';
+    END IF;
+    IF v_promo_price IS NOT NULL AND v_promo_price < v_minimum_selling_price THEN
+        RAISE EXCEPTION 'Promotional price cannot be lower than minimum allowed price';
+    END IF;
+    IF v_promo_price IS NOT NULL AND v_promo_price > v_selling_price THEN
+        RAISE EXCEPTION 'Promotional price cannot be greater than normal selling price';
+    END IF;
+    IF v_opening_stock < 0 THEN
+        RAISE EXCEPTION 'Opening stock cannot be negative';
+    END IF;
+
+    -- 1. Insert product record
+    INSERT INTO public.products (
+        name,
+        slug,
+        sku,
+        barcode,
+        description,
+        category_id,
+        brand,
+        unit,
+        purchase_cost,
+        selling_price,
+        promo_price,
+        minimum_selling_price,
+        stock_quantity,
+        reorder_level,
+        image_url,
+        is_active,
+        is_featured
+    )
+    VALUES (
+        v_name,
+        v_slug,
+        v_sku,
+        v_barcode,
+        v_description,
+        v_category_id,
+        v_brand,
+        v_unit,
+        v_purchase_cost,
+        v_selling_price,
+        v_promo_price,
+        v_minimum_selling_price,
+        v_opening_stock,
+        v_reorder_level,
+        v_image_url,
+        v_is_active,
+        v_is_featured
+    )
+    RETURNING id INTO v_product_id;
+
+    -- 2. Insert initial price history record
+    INSERT INTO public.product_price_history (
+        product_id,
+        purchase_cost,
+        normal_selling_price,
+        promo_price,
+        minimum_selling_price,
+        effective_from,
+        effective_until,
+        changed_by,
+        reason
+    )
+    VALUES (
+        v_product_id,
+        v_purchase_cost,
+        v_selling_price,
+        v_promo_price,
+        v_minimum_selling_price,
+        now(),
+        null,
+        v_effective_user_id,
+        'Initial pricing upon product creation'
+    );
+
+    -- 3. If opening stock > 0, insert opening movement
+    IF v_opening_stock > 0 THEN
+        INSERT INTO public.inventory_movements (
+            product_id,
+            movement_type,
+            quantity,
+            previous_stock,
+            resulting_stock,
+            reference_type,
+            reference_id,
+            unit_cost,
+            notes,
+            created_by
+        )
+        VALUES (
+            v_product_id,
+            'opening_stock',
+            v_opening_stock,
+            0.000,
+            v_opening_stock,
+            'product_creation',
+            v_product_id,
+            v_purchase_cost,
+            format('Opening stock balance recorded for SKU: %s', v_sku),
+            v_effective_user_id
+        );
+    END IF;
+
+    -- 4. Insert audit log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        new_values
+    )
+    VALUES (
+        v_effective_user_id,
+        'product.created',
+        'product',
+        v_product_id,
+        jsonb_build_object(
+            'name', v_name,
+            'sku', v_sku,
+            'selling_price', v_selling_price,
+            'purchase_cost', v_purchase_cost,
+            'stock_quantity', v_opening_stock
+        )
+    );
+
+    RETURN v_product_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.create_product_atomic(JSONB, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.create_product_atomic(JSONB, UUID) FROM anon;
+GRANT EXECUTE ON FUNCTION public.create_product_atomic(JSONB, UUID) TO authenticated, service_role;
+
+
+-- 9. ATOMIC PRICE CHANGE RPC
+CREATE OR REPLACE FUNCTION public.record_product_price_change(
+    p_product_id UUID,
+    p_purchase_cost NUMERIC(12, 2),
+    p_normal_selling_price NUMERIC(12, 2),
+    p_promo_price NUMERIC(12, 2) DEFAULT NULL,
+    p_minimum_selling_price NUMERIC(12, 2) DEFAULT 0.00,
+    p_reason TEXT DEFAULT 'Price revision',
+    p_user_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_product_name TEXT;
+    v_old_purchase_cost NUMERIC(12, 2);
+    v_old_selling_price NUMERIC(12, 2);
+    v_old_promo_price NUMERIC(12, 2);
+    v_effective_user_id UUID;
+    v_now TIMESTAMPTZ := now();
+BEGIN
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Permission denied: Staff access required for price change';
+    END IF;
+
+    -- Derive and verify authenticated actor
+    IF auth.uid() IS NOT NULL THEN
+        IF p_user_id IS NOT NULL AND p_user_id <> auth.uid() THEN
+            RAISE EXCEPTION 'Security violation: Actor ID mismatch (supplied %, authenticated %)', p_user_id, auth.uid();
+        END IF;
+        v_effective_user_id := auth.uid();
+    ELSIF current_user = 'service_role' OR current_setting('request.jwt.claim.role', true) = 'service_role' THEN
+        v_effective_user_id := p_user_id;
+    ELSE
+        RAISE EXCEPTION 'Authentication required: Action must be invoked by an authenticated user';
+    END IF;
+
+    -- Validate price guardrails
+    IF p_purchase_cost < 0 THEN
+        RAISE EXCEPTION 'Purchase cost cannot be negative';
+    END IF;
+    IF p_minimum_selling_price < 0 THEN
+        RAISE EXCEPTION 'Minimum selling price cannot be negative';
+    END IF;
+    IF p_normal_selling_price < p_minimum_selling_price THEN
+        RAISE EXCEPTION 'Normal selling price (%s) cannot be below minimum selling price (%s)',
+            p_normal_selling_price, p_minimum_selling_price;
+    END IF;
+    IF p_promo_price IS NOT NULL AND p_promo_price < p_minimum_selling_price THEN
+        RAISE EXCEPTION 'Promotional price (%s) cannot be below minimum selling price (%s)',
+            p_promo_price, p_minimum_selling_price;
+    END IF;
+    IF p_promo_price IS NOT NULL AND p_promo_price > p_normal_selling_price THEN
+        RAISE EXCEPTION 'Promotional price (%s) cannot exceed normal selling price (%s)',
+            p_promo_price, p_normal_selling_price;
+    END IF;
+
+    -- 1. Lock product row FOR UPDATE
+    SELECT name, purchase_cost, selling_price, promo_price
+    INTO v_product_name, v_old_purchase_cost, v_old_selling_price, v_old_promo_price
+    FROM public.products
+    WHERE id = p_product_id AND archived_at IS NULL
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Product % not found or has been archived', p_product_id;
+    END IF;
+
+    -- 2. Lock current active price record FOR UPDATE
+    PERFORM id FROM public.product_price_history
+    WHERE product_id = p_product_id AND effective_until IS NULL
+    FOR UPDATE;
+
+    -- 3. Close existing active price history record
+    UPDATE public.product_price_history
+    SET effective_until = v_now
+    WHERE product_id = p_product_id AND effective_until IS NULL;
+
+    -- 4. Insert new price history record
+    INSERT INTO public.product_price_history (
+        product_id,
+        purchase_cost,
+        normal_selling_price,
+        promo_price,
+        minimum_selling_price,
+        effective_from,
+        effective_until,
+        changed_by,
+        reason
+    )
+    VALUES (
+        p_product_id,
+        p_purchase_cost,
+        p_normal_selling_price,
+        p_promo_price,
+        p_minimum_selling_price,
+        v_now,
+        null,
+        v_effective_user_id,
+        p_reason
+    );
+
+    -- 5. Update product pricing fields
+    UPDATE public.products
+    SET purchase_cost = p_purchase_cost,
+        selling_price = p_normal_selling_price,
+        promo_price = p_promo_price,
+        minimum_selling_price = p_minimum_selling_price,
+        updated_at = v_now
+    WHERE id = p_product_id;
+
+    -- 6. Insert audit log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values
+    )
+    VALUES (
+        v_effective_user_id,
+        'product.price_changed',
+        'product',
+        p_product_id,
+        jsonb_build_object(
+            'purchase_cost', v_old_purchase_cost,
+            'selling_price', v_old_selling_price,
+            'promo_price', v_old_promo_price
+        ),
+        jsonb_build_object(
+            'purchase_cost', p_purchase_cost,
+            'selling_price', p_normal_selling_price,
+            'promo_price', p_promo_price,
+            'minimum_selling_price', p_minimum_selling_price,
+            'reason', p_reason
+        )
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'product_id', p_product_id,
+        'purchase_cost', p_purchase_cost,
+        'selling_price', p_normal_selling_price,
+        'effective_from', v_now
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_product_price_change(UUID, NUMERIC, NUMERIC, NUMERIC, NUMERIC, TEXT, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.record_product_price_change(UUID, NUMERIC, NUMERIC, NUMERIC, NUMERIC, TEXT, UUID) FROM anon;
+GRANT EXECUTE ON FUNCTION public.record_product_price_change(UUID, NUMERIC, NUMERIC, NUMERIC, NUMERIC, TEXT, UUID) TO authenticated, service_role;
+
+-- <<< END FILE: 20261006000000_pre_phase5_integrity_patch.sql <<<
+
+-- >>> FILE: 20261006000001_phase5_purchases_and_suppliers.sql >>>
+-- ==============================================================================
+-- BAQQALA GROCERY OPERATING SYSTEM & CUSTOMER PLATFORM
+-- Phase 5: Purchases, Suppliers, Receiving (GRN), Invoices, Payments & Returns
+-- Zone 19, Abu Dhabi
+-- ==============================================================================
+
+-- 1. ENUM ENHANCEMENTS
+-- Add partially_received and closed to purchase_status enum if not present
+DO $$ BEGIN
+    ALTER TYPE public.purchase_status ADD VALUE IF NOT EXISTS 'partially_received';
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER TYPE public.purchase_status ADD VALUE IF NOT EXISTS 'closed';
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER TYPE public.payment_method ADD VALUE IF NOT EXISTS 'bank_transfer';
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER TYPE public.payment_method ADD VALUE IF NOT EXISTS 'cheque';
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+
+-- 2. SEQUENCES FOR HUMAN-READABLE DOCUMENT NUMBERS
+CREATE SEQUENCE IF NOT EXISTS public.seq_supplier_code START WITH 1001;
+CREATE SEQUENCE IF NOT EXISTS public.seq_purchase_number START WITH 1001;
+CREATE SEQUENCE IF NOT EXISTS public.seq_grn_number START WITH 1001;
+CREATE SEQUENCE IF NOT EXISTS public.seq_supplier_payment START WITH 1001;
+CREATE SEQUENCE IF NOT EXISTS public.seq_supplier_return START WITH 1001;
+
+CREATE OR REPLACE FUNCTION public.generate_document_code(p_prefix TEXT, p_seq TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_num BIGINT;
+    v_year TEXT;
+BEGIN
+    v_year := to_char(CURRENT_DATE, 'YYYY');
+    EXECUTE format('SELECT nextval(%L)', p_seq) INTO v_num;
+    RETURN format('%s-%s-%s', p_prefix, v_year, lpad(v_num::text, 5, '0'));
+END;
+$$;
+
+
+-- 3. EXTEND SUPPLIERS TABLE
+ALTER TABLE public.suppliers
+    ADD COLUMN IF NOT EXISTS supplier_code TEXT,
+    ADD COLUMN IF NOT EXISTS tax_identifier TEXT,
+    ADD COLUMN IF NOT EXISTS payment_terms TEXT NOT NULL DEFAULT '30 days',
+    ADD COLUMN IF NOT EXISTS credit_limit NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (credit_limit >= 0),
+    ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS updated_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+-- Populate missing supplier codes safely
+UPDATE public.suppliers
+SET supplier_code = 'SUP-' || to_char(CURRENT_DATE, 'YYYY') || '-' || lpad(nextval('public.seq_supplier_code')::text, 5, '0')
+WHERE supplier_code IS NULL;
+
+-- Enforce uniqueness on supplier_code
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_suppliers_supplier_code'
+    ) THEN
+        ALTER TABLE public.suppliers ADD CONSTRAINT uq_suppliers_supplier_code UNIQUE (supplier_code);
+    END IF;
+END $$;
+
+
+-- 4. EXTEND PURCHASES & PURCHASE ITEMS TABLES
+ALTER TABLE public.purchases
+    ADD COLUMN IF NOT EXISTS purchase_number TEXT,
+    ADD COLUMN IF NOT EXISTS expected_delivery_date DATE,
+    ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (tax_amount >= 0),
+    ADD COLUMN IF NOT EXISTS additional_charges NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (additional_charges >= 0),
+    ADD COLUMN IF NOT EXISTS ordered_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS ordered_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS invoice_status TEXT NOT NULL DEFAULT 'unbilled' CHECK (invoice_status IN ('unbilled', 'partially_billed', 'billed')),
+    ADD COLUMN IF NOT EXISTS payment_status public.payment_status NOT NULL DEFAULT 'pending';
+
+-- Populate missing purchase numbers safely
+UPDATE public.purchases
+SET purchase_number = 'PO-' || to_char(COALESCE(purchase_date, CURRENT_DATE), 'YYYY') || '-' || lpad(nextval('public.seq_purchase_number')::text, 5, '0')
+WHERE purchase_number IS NULL;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_purchases_purchase_number'
+    ) THEN
+        ALTER TABLE public.purchases ADD CONSTRAINT uq_purchases_purchase_number UNIQUE (purchase_number);
+    END IF;
+END $$;
+
+ALTER TABLE public.purchase_items
+    ADD COLUMN IF NOT EXISTS received_quantity NUMERIC(12, 3) NOT NULL DEFAULT 0.000 CHECK (received_quantity >= 0),
+    ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (tax_amount >= 0),
+    ADD COLUMN IF NOT EXISTS notes TEXT;
+
+
+-- 5. CREATE GOODS RECEIVED NOTES (GRN) & ITEMS
+CREATE TABLE IF NOT EXISTS public.goods_received_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    purchase_id UUID NOT NULL REFERENCES public.purchases(id) ON DELETE RESTRICT,
+    supplier_id UUID NOT NULL REFERENCES public.suppliers(id) ON DELETE RESTRICT,
+    grn_number TEXT NOT NULL UNIQUE,
+    delivery_note_number TEXT,
+    status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+    notes TEXT,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    received_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.goods_received_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    grn_id UUID NOT NULL REFERENCES public.goods_received_notes(id) ON DELETE CASCADE,
+    purchase_item_id UUID NOT NULL REFERENCES public.purchase_items(id) ON DELETE RESTRICT,
+    product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE RESTRICT,
+    ordered_quantity NUMERIC(12, 3) NOT NULL CHECK (ordered_quantity >= 0),
+    previously_received_quantity NUMERIC(12, 3) NOT NULL DEFAULT 0.000 CHECK (previously_received_quantity >= 0),
+    received_quantity NUMERIC(12, 3) NOT NULL CHECK (received_quantity >= 0),
+    accepted_quantity NUMERIC(12, 3) NOT NULL CHECK (accepted_quantity >= 0),
+    rejected_quantity NUMERIC(12, 3) NOT NULL DEFAULT 0.000 CHECK (rejected_quantity >= 0),
+    unit_cost NUMERIC(12, 2) NOT NULL CHECK (unit_cost >= 0),
+    total_cost NUMERIC(12, 2) NOT NULL CHECK (total_cost >= 0),
+    batch_number TEXT,
+    expiry_date DATE,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+
+-- 6. CREATE SUPPLIER INVOICES TABLE
+CREATE TABLE IF NOT EXISTS public.supplier_invoices (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    supplier_id UUID NOT NULL REFERENCES public.suppliers(id) ON DELETE RESTRICT,
+    purchase_id UUID REFERENCES public.purchases(id) ON DELETE SET NULL,
+    invoice_number TEXT NOT NULL,
+    invoice_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    due_date DATE NOT NULL,
+    subtotal NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (subtotal >= 0),
+    discount_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (discount_amount >= 0),
+    tax_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (tax_amount >= 0),
+    total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (total_amount >= 0),
+    paid_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (paid_amount >= 0),
+    outstanding_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (outstanding_amount >= 0),
+    status TEXT NOT NULL DEFAULT 'unpaid' CHECK (status IN ('unpaid', 'partially_paid', 'paid', 'overdue', 'cancelled')),
+    attachment_url TEXT,
+    notes TEXT,
+    created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_supplier_invoice UNIQUE (supplier_id, invoice_number)
+);
+
+
+-- 7. CREATE SUPPLIER PAYMENTS TABLE
+CREATE TABLE IF NOT EXISTS public.supplier_payments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payment_number TEXT NOT NULL UNIQUE,
+    supplier_id UUID NOT NULL REFERENCES public.suppliers(id) ON DELETE RESTRICT,
+    invoice_id UUID REFERENCES public.supplier_invoices(id) ON DELETE SET NULL,
+    amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
+    payment_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    payment_method public.payment_method NOT NULL DEFAULT 'bank_transfer',
+    reference TEXT,
+    notes TEXT,
+    recorded_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+
+-- 8. CREATE SUPPLIER RETURNS TABLES
+CREATE TABLE IF NOT EXISTS public.supplier_returns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    return_number TEXT NOT NULL UNIQUE,
+    supplier_id UUID NOT NULL REFERENCES public.suppliers(id) ON DELETE RESTRICT,
+    purchase_id UUID REFERENCES public.purchases(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'requested', 'approved', 'completed', 'rejected', 'cancelled')),
+    total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (total_amount >= 0),
+    reason TEXT NOT NULL,
+    notes TEXT,
+    requested_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    approved_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.supplier_return_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    return_id UUID NOT NULL REFERENCES public.supplier_returns(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE RESTRICT,
+    quantity NUMERIC(12, 3) NOT NULL CHECK (quantity > 0),
+    unit_cost NUMERIC(12, 2) NOT NULL CHECK (unit_cost >= 0),
+    total_cost NUMERIC(12, 2) NOT NULL CHECK (total_cost >= 0),
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+
+-- 9. PERFORMANCE INDEXES
+CREATE INDEX IF NOT EXISTS idx_purchases_supplier_id ON public.purchases(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_purchases_status ON public.purchases(status);
+CREATE INDEX IF NOT EXISTS idx_purchases_purchase_date ON public.purchases(purchase_date);
+CREATE INDEX IF NOT EXISTS idx_goods_received_purchase_id ON public.goods_received_notes(purchase_id);
+CREATE INDEX IF NOT EXISTS idx_goods_received_supplier_id ON public.goods_received_notes(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_supplier_id ON public.supplier_invoices(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_status ON public.supplier_invoices(status);
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_due_date ON public.supplier_invoices(due_date);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_supplier_id ON public.supplier_payments(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_invoice_id ON public.supplier_payments(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_returns_supplier_id ON public.supplier_returns(supplier_id);
+
+
+-- 10. ROW-LEVEL SECURITY (RLS) POLICIES
+ALTER TABLE public.goods_received_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.goods_received_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.supplier_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.supplier_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.supplier_returns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.supplier_return_items ENABLE ROW LEVEL SECURITY;
+
+-- GRN: Staff view, trusted RPC write
+DROP POLICY IF EXISTS "grn_select" ON public.goods_received_notes;
+CREATE POLICY "grn_select" ON public.goods_received_notes FOR SELECT USING (public.is_staff());
+DROP POLICY IF EXISTS "grn_write_service" ON public.goods_received_notes;
+CREATE POLICY "grn_write_service" ON public.goods_received_notes FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "grn_items_select" ON public.goods_received_items;
+CREATE POLICY "grn_items_select" ON public.goods_received_items FOR SELECT USING (public.is_staff());
+DROP POLICY IF EXISTS "grn_items_write_service" ON public.goods_received_items;
+CREATE POLICY "grn_items_write_service" ON public.goods_received_items FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- Supplier Invoices
+DROP POLICY IF EXISTS "invoices_select" ON public.supplier_invoices;
+CREATE POLICY "invoices_select" ON public.supplier_invoices FOR SELECT USING (public.is_staff());
+DROP POLICY IF EXISTS "invoices_insert" ON public.supplier_invoices;
+CREATE POLICY "invoices_insert" ON public.supplier_invoices FOR INSERT WITH CHECK (public.is_staff());
+DROP POLICY IF EXISTS "invoices_update" ON public.supplier_invoices;
+CREATE POLICY "invoices_update" ON public.supplier_invoices FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+-- Supplier Payments
+DROP POLICY IF EXISTS "payments_select" ON public.supplier_payments;
+CREATE POLICY "payments_select" ON public.supplier_payments FOR SELECT USING (public.is_staff());
+DROP POLICY IF EXISTS "payments_insert" ON public.supplier_payments;
+CREATE POLICY "payments_insert" ON public.supplier_payments FOR INSERT WITH CHECK (public.is_admin());
+
+-- Supplier Returns
+DROP POLICY IF EXISTS "returns_select" ON public.supplier_returns;
+CREATE POLICY "returns_select" ON public.supplier_returns FOR SELECT USING (public.is_staff());
+DROP POLICY IF EXISTS "returns_insert" ON public.supplier_returns;
+CREATE POLICY "returns_insert" ON public.supplier_returns FOR INSERT WITH CHECK (public.is_staff());
+DROP POLICY IF EXISTS "returns_update" ON public.supplier_returns;
+CREATE POLICY "returns_update" ON public.supplier_returns FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "return_items_select" ON public.supplier_return_items;
+CREATE POLICY "return_items_select" ON public.supplier_return_items FOR SELECT USING (public.is_staff());
+DROP POLICY IF EXISTS "return_items_insert" ON public.supplier_return_items;
+CREATE POLICY "return_items_insert" ON public.supplier_return_items FOR INSERT WITH CHECK (public.is_staff());
+
+
+-- 11. ATOMIC TRANSACTION: RECEIVE PURCHASE ORDER (GRN + STOCK IN)
+CREATE OR REPLACE FUNCTION public.receive_purchase_order_atomic(
+    p_purchase_id UUID,
+    p_items JSONB,
+    p_delivery_note TEXT DEFAULT NULL,
+    p_notes TEXT DEFAULT NULL,
+    p_user_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_purchase RECORD;
+    v_item JSONB;
+    v_purchase_item_id UUID;
+    v_product_id UUID;
+    v_accepted_qty NUMERIC(12, 3);
+    v_rejected_qty NUMERIC(12, 3);
+    v_unit_cost NUMERIC(12, 2);
+    v_batch_number TEXT;
+    v_expiry_date DATE;
+    v_pitem RECORD;
+    v_prod RECORD;
+    v_current_stock NUMERIC(12, 3);
+    v_new_stock NUMERIC(12, 3);
+    v_grn_id UUID;
+    v_grn_number TEXT;
+    v_effective_user_id UUID;
+    v_all_received BOOLEAN := true;
+    v_any_received BOOLEAN := false;
+    v_total_accepted_items INTEGER := 0;
+    v_now TIMESTAMPTZ := now();
+BEGIN
+    -- 1. Authorization & actor verification
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Permission denied: Staff access required for purchase receiving';
+    END IF;
+
+    IF auth.uid() IS NOT NULL THEN
+        IF p_user_id IS NOT NULL AND p_user_id <> auth.uid() THEN
+            RAISE EXCEPTION 'Security violation: Actor ID mismatch (supplied %, authenticated %)', p_user_id, auth.uid();
+        END IF;
+        v_effective_user_id := auth.uid();
+    ELSIF current_user = 'service_role' OR current_setting('request.jwt.claim.role', true) = 'service_role' THEN
+        v_effective_user_id := p_user_id;
+    ELSE
+        RAISE EXCEPTION 'Authentication required: Action must be invoked by an authenticated user';
+    END IF;
+
+    -- 2. Lock purchase record FOR UPDATE
+    SELECT id, purchase_number, supplier_id, status
+    INTO v_purchase
+    FROM public.purchases
+    WHERE id = p_purchase_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Purchase order % not found', p_purchase_id;
+    END IF;
+
+    IF v_purchase.status NOT IN ('ordered', 'partially_received') THEN
+        RAISE EXCEPTION 'Cannot receive purchase order with status "%" (must be ordered or partially_received)', v_purchase.status;
+    END IF;
+
+    -- 3. Create GRN Header
+    v_grn_number := public.generate_document_code('GRN', 'public.seq_grn_number');
+
+    INSERT INTO public.goods_received_notes (
+        purchase_id,
+        supplier_id,
+        grn_number,
+        delivery_note_number,
+        status,
+        notes,
+        received_at,
+        received_by
+    )
+    VALUES (
+        p_purchase_id,
+        v_purchase.supplier_id,
+        v_grn_number,
+        p_delivery_note,
+        'completed',
+        p_notes,
+        v_now,
+        v_effective_user_id
+    )
+    RETURNING id INTO v_grn_id;
+
+    -- 4. Process each item in p_items atomically
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        v_purchase_item_id := (v_item->>'purchaseItemId')::UUID;
+        v_accepted_qty := COALESCE((v_item->>'acceptedQuantity')::NUMERIC(12, 3), 0.000);
+        v_rejected_qty := COALESCE((v_item->>'rejectedQuantity')::NUMERIC(12, 3), 0.000);
+        v_unit_cost := nullif(v_item->>'unitCost', '')::NUMERIC(12, 2);
+        v_batch_number := nullif(trim(v_item->>'batchNumber'), '');
+        v_expiry_date := nullif(v_item->>'expiryDate', '')::DATE;
+
+        IF v_accepted_qty < 0 OR v_rejected_qty < 0 THEN
+            RAISE EXCEPTION 'Received quantities cannot be negative';
+        END IF;
+
+        -- Lock purchase item FOR UPDATE
+        SELECT id, product_id, quantity, received_quantity, final_unit_cost
+        INTO v_pitem
+        FROM public.purchase_items
+        WHERE id = v_purchase_item_id AND purchase_id = p_purchase_id
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Purchase item % not found in purchase %', v_purchase_item_id, p_purchase_id;
+        END IF;
+
+        -- Fallback unit cost to purchase order item cost if not specified
+        IF v_unit_cost IS NULL OR v_unit_cost <= 0 THEN
+            v_unit_cost := v_pitem.final_unit_cost;
+        END IF;
+
+        -- Validate over-receiving: accepted_quantity + previously received must not exceed ordered quantity
+        IF (v_pitem.received_quantity + v_accepted_qty) > v_pitem.quantity THEN
+            RAISE EXCEPTION 'Over-receiving rejected for item %: ordered %, already received %, requested %',
+                v_purchase_item_id, v_pitem.quantity, v_pitem.received_quantity, v_accepted_qty;
+        END IF;
+
+        -- Process stock increase only if accepted_qty > 0
+        IF v_accepted_qty > 0 THEN
+            v_any_received := true;
+
+            -- Row lock on product
+            SELECT id, name, stock_quantity, purchase_cost
+            INTO v_prod
+            FROM public.products
+            WHERE id = v_pitem.product_id AND archived_at IS NULL
+            FOR UPDATE;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Product % not found or has been archived', v_pitem.product_id;
+            END IF;
+
+            v_current_stock := v_prod.stock_quantity;
+            v_new_stock := v_current_stock + v_accepted_qty;
+
+            -- 4a. Update product stock quantity
+            UPDATE public.products
+            SET stock_quantity = v_new_stock,
+                purchase_cost = v_unit_cost, -- Keep last acquisition purchase cost updated
+                updated_at = v_now
+            WHERE id = v_pitem.product_id;
+
+            -- 4b. Insert immutable inventory movement ledger record
+            INSERT INTO public.inventory_movements (
+                product_id,
+                movement_type,
+                quantity,
+                previous_stock,
+                resulting_stock,
+                reference_type,
+                reference_id,
+                unit_cost,
+                notes,
+                created_by
+            )
+            VALUES (
+                v_pitem.product_id,
+                'purchase',
+                v_accepted_qty,
+                v_current_stock,
+                v_new_stock,
+                'goods_received_note',
+                v_grn_id,
+                v_unit_cost,
+                format('Received via %s for PO %s (%s units)', v_grn_number, v_purchase.purchase_number, v_accepted_qty),
+                v_effective_user_id
+            );
+
+            -- 4c. Batch tracking if provided
+            IF v_batch_number IS NOT NULL THEN
+                INSERT INTO public.product_batches (
+                    product_id,
+                    batch_number,
+                    expiry_date,
+                    quantity,
+                    purchase_cost
+                )
+                VALUES (
+                    v_pitem.product_id,
+                    v_batch_number,
+                    v_expiry_date,
+                    v_accepted_qty,
+                    v_unit_cost
+                )
+                ON CONFLICT (product_id, batch_number) DO UPDATE SET
+                    quantity = product_batches.quantity + EXCLUDED.quantity,
+                    expiry_date = COALESCE(EXCLUDED.expiry_date, product_batches.expiry_date);
+            END IF;
+
+            v_total_accepted_items := v_total_accepted_items + 1;
+        END IF;
+
+        -- 4d. Update purchase_items received quantity
+        UPDATE public.purchase_items
+        SET received_quantity = received_quantity + v_accepted_qty
+        WHERE id = v_purchase_item_id;
+
+        -- 4e. Record GRN line item
+        INSERT INTO public.goods_received_items (
+            grn_id,
+            purchase_item_id,
+            product_id,
+            ordered_quantity,
+            previously_received_quantity,
+            received_quantity,
+            accepted_quantity,
+            rejected_quantity,
+            unit_cost,
+            total_cost,
+            batch_number,
+            expiry_date,
+            notes
+        )
+        VALUES (
+            v_grn_id,
+            v_purchase_item_id,
+            v_pitem.product_id,
+            v_pitem.quantity,
+            v_pitem.received_quantity,
+            (v_accepted_qty + v_rejected_qty),
+            v_accepted_qty,
+            v_rejected_qty,
+            v_unit_cost,
+            (v_accepted_qty * v_unit_cost),
+            v_batch_number,
+            v_expiry_date,
+            nullif(trim(v_item->>'notes'), '')
+        );
+    END LOOP;
+
+    -- 5. Determine new status of the Purchase Order
+    -- Check if all items are fully received
+    SELECT bool_and(received_quantity >= quantity)
+    INTO v_all_received
+    FROM public.purchase_items
+    WHERE purchase_id = p_purchase_id;
+
+    IF v_all_received THEN
+        UPDATE public.purchases
+        SET status = 'received',
+            updated_at = v_now
+        WHERE id = p_purchase_id;
+    ELSIF v_any_received THEN
+        UPDATE public.purchases
+        SET status = 'partially_received',
+            updated_at = v_now
+        WHERE id = p_purchase_id;
+    END IF;
+
+    -- 6. Record System Audit Log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        new_values
+    )
+    VALUES (
+        v_effective_user_id,
+        'purchase.received',
+        'goods_received_note',
+        v_grn_id,
+        jsonb_build_object(
+            'grn_number', v_grn_number,
+            'purchase_id', p_purchase_id,
+            'purchase_number', v_purchase.purchase_number,
+            'items_received', v_total_accepted_items,
+            'delivery_note', p_delivery_note,
+            'all_received', v_all_received
+        )
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'grn_id', v_grn_id,
+        'grn_number', v_grn_number,
+        'all_received', v_all_received
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.receive_purchase_order_atomic(UUID, JSONB, TEXT, TEXT, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.receive_purchase_order_atomic(UUID, JSONB, TEXT, TEXT, UUID) FROM anon;
+GRANT EXECUTE ON FUNCTION public.receive_purchase_order_atomic(UUID, JSONB, TEXT, TEXT, UUID) TO authenticated, service_role;
+
+
+-- 12. ATOMIC TRANSACTION: RECORD SUPPLIER PAYMENT
+CREATE OR REPLACE FUNCTION public.record_supplier_payment_atomic(
+    p_supplier_id UUID,
+    p_invoice_id UUID,
+    p_amount NUMERIC(12, 2),
+    p_payment_method public.payment_method,
+    p_reference TEXT DEFAULT NULL,
+    p_notes TEXT DEFAULT NULL,
+    p_user_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_inv RECORD;
+    v_payment_id UUID;
+    v_payment_number TEXT;
+    v_effective_user_id UUID;
+    v_new_paid NUMERIC(12, 2);
+    v_new_outstanding NUMERIC(12, 2);
+    v_new_status TEXT;
+    v_now TIMESTAMPTZ := now();
+BEGIN
+    IF NOT public.is_admin() THEN
+        RAISE EXCEPTION 'Permission denied: Admin access required to record payments';
+    END IF;
+
+    IF auth.uid() IS NOT NULL THEN
+        IF p_user_id IS NOT NULL AND p_user_id <> auth.uid() THEN
+            RAISE EXCEPTION 'Security violation: Actor ID mismatch (supplied %, authenticated %)', p_user_id, auth.uid();
+        END IF;
+        v_effective_user_id := auth.uid();
+    ELSIF current_user = 'service_role' OR current_setting('request.jwt.claim.role', true) = 'service_role' THEN
+        v_effective_user_id := p_user_id;
+    ELSE
+        RAISE EXCEPTION 'Authentication required: Action must be invoked by an authenticated user';
+    END IF;
+
+    IF p_amount <= 0 THEN
+        RAISE EXCEPTION 'Payment amount must be strictly greater than zero';
+    END IF;
+
+    -- 1. If linked to an invoice, lock and validate
+    IF p_invoice_id IS NOT NULL THEN
+        SELECT id, purchase_id, total_amount, paid_amount, outstanding_amount, status
+        INTO v_inv
+        FROM public.supplier_invoices
+        WHERE id = p_invoice_id AND supplier_id = p_supplier_id
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Supplier invoice % not found for supplier %', p_invoice_id, p_supplier_id;
+        END IF;
+
+        IF p_amount > v_inv.outstanding_amount THEN
+            RAISE EXCEPTION 'Payment amount (%s) exceeds outstanding invoice balance (%s)', p_amount, v_inv.outstanding_amount;
+        END IF;
+
+        v_new_paid := v_inv.paid_amount + p_amount;
+        v_new_outstanding := v_inv.outstanding_amount - p_amount;
+
+        IF v_new_outstanding <= 0.001 THEN
+            v_new_status := 'paid';
+        ELSE
+            v_new_status := 'partially_paid';
+        END IF;
+
+        -- Update invoice
+        UPDATE public.supplier_invoices
+        SET paid_amount = v_new_paid,
+            outstanding_amount = v_new_outstanding,
+            status = v_new_status,
+            updated_at = v_now
+        WHERE id = p_invoice_id;
+
+        -- If linked to purchase, update purchase payment status
+        IF v_inv.purchase_id IS NOT NULL THEN
+            UPDATE public.purchases
+            SET payment_status = v_new_status::public.payment_status,
+                updated_at = v_now
+            WHERE id = v_inv.purchase_id;
+        END IF;
+    END IF;
+
+    -- 2. Insert Payment Record
+    v_payment_number := public.generate_document_code('SPAY', 'public.seq_supplier_payment');
+
+    INSERT INTO public.supplier_payments (
+        payment_number,
+        supplier_id,
+        invoice_id,
+        amount,
+        payment_date,
+        payment_method,
+        reference,
+        notes,
+        recorded_by
+    )
+    VALUES (
+        v_payment_number,
+        p_supplier_id,
+        p_invoice_id,
+        p_amount,
+        CURRENT_DATE,
+        p_payment_method,
+        p_reference,
+        p_notes,
+        v_effective_user_id
+    )
+    RETURNING id INTO v_payment_id;
+
+    -- 3. Audit log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        new_values
+    )
+    VALUES (
+        v_effective_user_id,
+        'supplier_payment.recorded',
+        'supplier_payment',
+        v_payment_id,
+        jsonb_build_object(
+            'payment_number', v_payment_number,
+            'supplier_id', p_supplier_id,
+            'invoice_id', p_invoice_id,
+            'amount', p_amount,
+            'payment_method', p_payment_method,
+            'reference', p_reference
+        )
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'payment_id', v_payment_id,
+        'payment_number', v_payment_number
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_supplier_payment_atomic(UUID, UUID, NUMERIC, public.payment_method, TEXT, TEXT, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.record_supplier_payment_atomic(UUID, UUID, NUMERIC, public.payment_method, TEXT, TEXT, UUID) FROM anon;
+GRANT EXECUTE ON FUNCTION public.record_supplier_payment_atomic(UUID, UUID, NUMERIC, public.payment_method, TEXT, TEXT, UUID) TO authenticated, service_role;
+
+
+-- 13. ATOMIC TRANSACTION: COMPLETE SUPPLIER RETURN (STOCK OUT)
+CREATE OR REPLACE FUNCTION public.complete_supplier_return_atomic(
+    p_return_id UUID,
+    p_user_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_ret RECORD;
+    v_item RECORD;
+    v_prod RECORD;
+    v_effective_user_id UUID;
+    v_current_stock NUMERIC(12, 3);
+    v_new_stock NUMERIC(12, 3);
+    v_total_items INTEGER := 0;
+    v_now TIMESTAMPTZ := now();
+BEGIN
+    IF NOT public.is_admin() THEN
+        RAISE EXCEPTION 'Permission denied: Admin access required to finalize supplier returns';
+    END IF;
+
+    IF auth.uid() IS NOT NULL THEN
+        IF p_user_id IS NOT NULL AND p_user_id <> auth.uid() THEN
+            RAISE EXCEPTION 'Security violation: Actor ID mismatch (supplied %, authenticated %)', p_user_id, auth.uid();
+        END IF;
+        v_effective_user_id := auth.uid();
+    ELSIF current_user = 'service_role' OR current_setting('request.jwt.claim.role', true) = 'service_role' THEN
+        v_effective_user_id := p_user_id;
+    ELSE
+        RAISE EXCEPTION 'Authentication required: Action must be invoked by an authenticated user';
+    END IF;
+
+    -- 1. Lock return record
+    SELECT id, return_number, supplier_id, purchase_id, status, total_amount
+    INTO v_ret
+    FROM public.supplier_returns
+    WHERE id = p_return_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Supplier return % not found', p_return_id;
+    END IF;
+
+    IF v_ret.status NOT IN ('draft', 'requested', 'approved') THEN
+        RAISE EXCEPTION 'Cannot complete return with status "%" (must be draft, requested, or approved)', v_ret.status;
+    END IF;
+
+    -- 2. Process items and decrease inventory atomically
+    FOR v_item IN
+        SELECT id, product_id, quantity, unit_cost
+        FROM public.supplier_return_items
+        WHERE return_id = p_return_id
+    LOOP
+        -- Lock product
+        SELECT id, name, stock_quantity
+        INTO v_prod
+        FROM public.products
+        WHERE id = v_item.product_id AND archived_at IS NULL
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Product % not found or has been archived', v_item.product_id;
+        END IF;
+
+        IF v_prod.stock_quantity < v_item.quantity THEN
+            RAISE EXCEPTION 'Insufficient stock to return "%": available % units, requested return of % units',
+                v_prod.name, v_prod.stock_quantity, v_item.quantity;
+        END IF;
+
+        v_current_stock := v_prod.stock_quantity;
+        v_new_stock := v_current_stock - v_item.quantity;
+
+        -- Update stock
+        UPDATE public.products
+        SET stock_quantity = v_new_stock,
+            updated_at = v_now
+        WHERE id = v_item.product_id;
+
+        -- Insert movement ledger record
+        INSERT INTO public.inventory_movements (
+            product_id,
+            movement_type,
+            quantity,
+            previous_stock,
+            resulting_stock,
+            reference_type,
+            reference_id,
+            unit_cost,
+            notes,
+            created_by
+        )
+        VALUES (
+            v_item.product_id,
+            'supplier_return',
+            -v_item.quantity,
+            v_current_stock,
+            v_new_stock,
+            'supplier_return',
+            p_return_id,
+            v_item.unit_cost,
+            format('Supplier Return %s (Qty: %s)', v_ret.return_number, v_item.quantity),
+            v_effective_user_id
+        );
+
+        v_total_items := v_total_items + 1;
+    END LOOP;
+
+    -- 3. Mark return completed
+    UPDATE public.supplier_returns
+    SET status = 'completed',
+        completed_at = v_now,
+        approved_by = v_effective_user_id,
+        updated_at = v_now
+    WHERE id = p_return_id;
+
+    -- 4. Audit Log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        new_values
+    )
+    VALUES (
+        v_effective_user_id,
+        'supplier_return.completed',
+        'supplier_return',
+        p_return_id,
+        jsonb_build_object(
+            'return_number', v_ret.return_number,
+            'supplier_id', v_ret.supplier_id,
+            'purchase_id', v_ret.purchase_id,
+            'items_count', v_total_items,
+            'total_amount', v_ret.total_amount
+        )
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'return_id', p_return_id,
+        'return_number', v_ret.return_number,
+        'items_returned', v_total_items
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.complete_supplier_return_atomic(UUID, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.complete_supplier_return_atomic(UUID, UUID) FROM anon;
+GRANT EXECUTE ON FUNCTION public.complete_supplier_return_atomic(UUID, UUID) TO authenticated, service_role;
+
+-- <<< END FILE: 20261006000001_phase5_purchases_and_suppliers.sql <<<
+
+-- >>> FILE: 20261006000002_phase6_customer_storefront.sql >>>
+-- ==============================================================================
+-- BAQQALA GROCERY OPERATING SYSTEM & CUSTOMER PLATFORM
+-- Phase 6: Customer Storefront, Catalog, Cart, Checkout & Orders
+-- Zone 19, Abu Dhabi
+-- ==============================================================================
+
+-- 1. ADD 'customer' ROLE TO user_role ENUM IF NOT PRESENT
+DO $$ BEGIN
+    ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'customer';
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- 1.1 SECURE NEW USER TRIGGER: DEFAULT TO 'customer' ROLE
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+DECLARE
+    assigned_role public.user_role := 'customer';
+    user_full_name TEXT;
+    user_phone TEXT;
+BEGIN
+    IF NEW.raw_user_meta_data->>'role' IN ('owner', 'admin', 'staff', 'customer') THEN
+        assigned_role := (NEW.raw_user_meta_data->>'role')::public.user_role;
+    END IF;
+
+    user_full_name := COALESCE(
+        NEW.raw_user_meta_data->>'full_name',
+        NEW.raw_user_meta_data->>'name',
+        split_part(NEW.email, '@', 1)
+    );
+
+    user_phone := NEW.raw_user_meta_data->>'phone';
+
+    INSERT INTO public.profiles (id, full_name, phone, avatar_url, role, is_active)
+    VALUES (
+        NEW.id,
+        user_full_name,
+        user_phone,
+        NEW.raw_user_meta_data->>'avatar_url',
+        assigned_role,
+        true
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        full_name = EXCLUDED.full_name,
+        phone = COALESCE(EXCLUDED.phone, public.profiles.phone),
+        updated_at = now();
+
+    -- Also auto-provision customer record for customer signups
+    IF assigned_role = 'customer' THEN
+        INSERT INTO public.customers (
+            auth_user_id,
+            name,
+            email,
+            mobile,
+            address,
+            zone,
+            customer_segment,
+            is_active
+        )
+        VALUES (
+            NEW.id,
+            user_full_name,
+            NEW.email,
+            COALESCE(user_phone, '0500000000'),
+            'Zone 19, Abu Dhabi',
+            'Zone 19',
+            'new',
+            true
+        )
+        ON CONFLICT (auth_user_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            email = EXCLUDED.email,
+            updated_at = now();
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 2. ENHANCE CUSTOMERS TABLE WITH AUTH LINKING
+ALTER TABLE public.customers
+    ADD COLUMN IF NOT EXISTS auth_user_id UUID UNIQUE REFERENCES auth.users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS email TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_customers_auth_user ON public.customers(auth_user_id);
+CREATE INDEX IF NOT EXISTS idx_customers_email ON public.customers(email);
+
+-- 3. CUSTOMER ADDRESSES TABLE
+CREATE TABLE IF NOT EXISTS public.customer_addresses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id UUID NOT NULL REFERENCES public.customers(id) ON DELETE CASCADE,
+    label TEXT NOT NULL DEFAULT 'Home',
+    recipient_name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    building_or_villa TEXT NOT NULL,
+    street TEXT NOT NULL,
+    area TEXT NOT NULL,
+    city TEXT NOT NULL DEFAULT 'Abu Dhabi',
+    emirate TEXT NOT NULL DEFAULT 'Abu Dhabi',
+    zone TEXT NOT NULL DEFAULT 'Zone 19',
+    delivery_instructions TEXT,
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_addresses_customer ON public.customer_addresses(customer_id);
+CREATE INDEX IF NOT EXISTS idx_customer_addresses_default ON public.customer_addresses(customer_id, is_default);
+
+DROP TRIGGER IF EXISTS trigger_set_updated_at_customer_addresses ON public.customer_addresses;
+CREATE TRIGGER trigger_set_updated_at_customer_addresses
+    BEFORE UPDATE ON public.customer_addresses
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- 4. ENHANCE ORDERS TABLE WITH TAX & DELIVERY CHARGE COLUMNS
+ALTER TABLE public.orders
+    ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (tax_amount >= 0),
+    ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (delivery_fee >= 0);
+
+-- 5. ORDER DOCUMENT SEQUENCE
+CREATE SEQUENCE IF NOT EXISTS public.seq_order_number START 1;
+
+-- 6. ATOMIC ORDER CREATION RPC
+-- Concurrency-safe, server-authoritative pricing and inventory deduction
+CREATE OR REPLACE FUNCTION public.create_customer_order_atomic(
+    p_customer_id UUID,
+    p_items JSONB,
+    p_delivery_address TEXT,
+    p_delivery_notes TEXT DEFAULT NULL,
+    p_payment_method payment_method DEFAULT 'cash',
+    p_order_source order_source DEFAULT 'website',
+    p_user_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order_id UUID;
+    v_order_number TEXT;
+    v_item RECORD;
+    v_prod RECORD;
+    v_item_json JSONB;
+    v_product_id UUID;
+    v_quantity NUMERIC(12, 3);
+    v_unit_price NUMERIC(12, 2);
+    v_line_total NUMERIC(12, 2);
+    v_subtotal NUMERIC(12, 2) := 0.00;
+    v_tax_rate NUMERIC(5, 4) := 0.0500; -- 5% UAE standard VAT
+    v_tax_amount NUMERIC(12, 2) := 0.00;
+    v_delivery_fee NUMERIC(12, 2) := 0.00;
+    v_grand_total NUMERIC(12, 2) := 0.00;
+    v_current_stock NUMERIC(12, 3);
+    v_new_stock NUMERIC(12, 3);
+    v_items_count INTEGER := 0;
+    v_now TIMESTAMPTZ := now();
+    v_year TEXT := to_char(CURRENT_DATE, 'YYYY');
+    v_seq_val BIGINT;
+    v_customer RECORD;
+BEGIN
+    -- 1. Validate customer
+    IF p_customer_id IS NOT NULL THEN
+        SELECT id, name, mobile, total_orders, total_spend
+        INTO v_customer
+        FROM public.customers
+        WHERE id = p_customer_id;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Customer ID % not found', p_customer_id;
+        END IF;
+    END IF;
+
+    -- 2. Validate items array
+    IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
+        RAISE EXCEPTION 'Order items array cannot be empty';
+    END IF;
+
+    IF p_delivery_address IS NULL OR length(trim(p_delivery_address)) = 0 THEN
+        RAISE EXCEPTION 'Delivery address is required';
+    END IF;
+
+    -- 3. Generate sequential order number (ORD-YYYY-NNNNN)
+    SELECT nextval('public.seq_order_number') INTO v_seq_val;
+    v_order_number := 'ORD-' || v_year || '-' || lpad(v_seq_val::text, 5, '0');
+
+    -- Generate Order UUID
+    v_order_id := gen_random_uuid();
+
+    -- 4. Process each item: Row-lock product, validate stock, compute authoritative price
+    FOR v_item_json IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        v_product_id := (v_item_json->>'product_id')::UUID;
+        v_quantity := (v_item_json->>'quantity')::NUMERIC(12, 3);
+
+        IF v_product_id IS NULL THEN
+            RAISE EXCEPTION 'Product ID cannot be null in order line';
+        END IF;
+
+        IF v_quantity IS NULL OR v_quantity <= 0 THEN
+            RAISE EXCEPTION 'Quantity must be greater than zero';
+        END IF;
+
+        -- Lock product row FOR UPDATE to prevent race conditions
+        SELECT id, name, selling_price, promo_price, purchase_cost, stock_quantity, is_active, archived_at
+        INTO v_prod
+        FROM public.products
+        WHERE id = v_product_id
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Product % does not exist', v_product_id;
+        END IF;
+
+        IF NOT v_prod.is_active OR v_prod.archived_at IS NOT NULL THEN
+            RAISE EXCEPTION 'Product "%" is no longer available for purchase', v_prod.name;
+        END IF;
+
+        -- Check stock availability
+        IF v_prod.stock_quantity < v_quantity THEN
+            RAISE EXCEPTION 'Insufficient stock for "%". Requested: %, Available: %',
+                v_prod.name, v_quantity, v_prod.stock_quantity;
+        END IF;
+
+        -- Authoritative price resolution: promo_price if valid, else selling_price
+        IF v_prod.promo_price IS NOT NULL AND v_prod.promo_price > 0 AND v_prod.promo_price < v_prod.selling_price THEN
+            v_unit_price := v_prod.promo_price;
+        ELSE
+            v_unit_price := v_prod.selling_price;
+        END IF;
+
+        v_line_total := round(v_unit_price * v_quantity, 2);
+        v_subtotal := v_subtotal + v_line_total;
+
+        -- Calculate stock changes
+        v_current_stock := v_prod.stock_quantity;
+        v_new_stock := v_current_stock - v_quantity;
+
+        -- Deduct stock
+        UPDATE public.products
+        SET stock_quantity = v_new_stock,
+            updated_at = v_now
+        WHERE id = v_product_id;
+
+        -- Append to immutable inventory movement ledger
+        INSERT INTO public.inventory_movements (
+            product_id,
+            movement_type,
+            quantity,
+            previous_stock,
+            resulting_stock,
+            reference_type,
+            reference_id,
+            unit_cost,
+            notes,
+            created_by
+        )
+        VALUES (
+            v_product_id,
+            'sale',
+            -v_quantity,
+            v_current_stock,
+            v_new_stock,
+            'order',
+            v_order_id,
+            v_prod.purchase_cost,
+            'Customer Order ' || v_order_number,
+            p_user_id
+        );
+
+        -- Insert order item
+        INSERT INTO public.order_items (
+            order_id,
+            product_id,
+            product_name,
+            quantity,
+            selling_price,
+            purchase_cost_at_sale,
+            discount_amount,
+            total_amount
+        )
+        VALUES (
+            v_order_id,
+            v_product_id,
+            v_prod.name,
+            v_quantity,
+            v_unit_price,
+            v_prod.purchase_cost,
+            CASE
+                WHEN v_prod.promo_price IS NOT NULL AND v_prod.promo_price < v_prod.selling_price
+                THEN round((v_prod.selling_price - v_prod.promo_price) * v_quantity, 2)
+                ELSE 0.00
+            END,
+            v_line_total
+        );
+
+        v_items_count := v_items_count + 1;
+    END LOOP;
+
+    -- 5. Calculate tax & delivery fee
+    -- UAE VAT 5%
+    v_tax_amount := round(v_subtotal * v_tax_rate, 2);
+
+    -- Standard delivery rules: free if subtotal >= 100 AED, else 10 AED
+    IF v_subtotal >= 100.00 THEN
+        v_delivery_fee := 0.00;
+    ELSE
+        v_delivery_fee := 10.00;
+    END IF;
+
+    v_grand_total := v_subtotal + v_tax_amount + v_delivery_fee;
+
+    -- 6. Insert Order Header
+    INSERT INTO public.orders (
+        id,
+        order_number,
+        customer_id,
+        order_source,
+        status,
+        payment_method,
+        payment_status,
+        subtotal,
+        discount_amount,
+        tax_amount,
+        delivery_fee,
+        total_amount,
+        delivery_address,
+        delivery_notes,
+        order_date,
+        created_by,
+        created_at,
+        updated_at
+    )
+    VALUES (
+        v_order_id,
+        v_order_number,
+        p_customer_id,
+        p_order_source,
+        'pending',
+        p_payment_method,
+        'pending',
+        v_subtotal,
+        0.00,
+        v_tax_amount,
+        v_delivery_fee,
+        v_grand_total,
+        p_delivery_address,
+        p_delivery_notes,
+        v_now,
+        p_user_id,
+        v_now,
+        v_now
+    );
+
+    -- 7. Update Customer Statistics if linked to customer
+    IF p_customer_id IS NOT NULL THEN
+        UPDATE public.customers
+        SET total_orders = total_orders + 1,
+            total_spend = total_spend + v_grand_total,
+            last_order_at = v_now,
+            first_order_at = COALESCE(first_order_at, v_now),
+            customer_segment = CASE
+                WHEN (total_orders + 1) >= 10 OR (total_spend + v_grand_total) >= 1000 THEN 'vip'::customer_segment
+                WHEN (total_orders + 1) >= 3 THEN 'regular'::customer_segment
+                ELSE 'new'::customer_segment
+            END,
+            updated_at = v_now
+        WHERE id = p_customer_id;
+    END IF;
+
+    -- Return Order Receipt
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', v_order_id,
+        'order_number', v_order_number,
+        'items_count', v_items_count,
+        'subtotal', v_subtotal,
+        'tax_amount', v_tax_amount,
+        'delivery_fee', v_delivery_fee,
+        'total_amount', v_grand_total
+    );
+END;
+$$;
+
+-- 7. ATOMIC ORDER CANCELLATION RPC (Restores inventory safely)
+CREATE OR REPLACE FUNCTION public.cancel_customer_order_atomic(
+    p_order_id UUID,
+    p_reason TEXT DEFAULT NULL,
+    p_user_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order RECORD;
+    v_item RECORD;
+    v_prod RECORD;
+    v_current_stock NUMERIC(12, 3);
+    v_new_stock NUMERIC(12, 3);
+    v_now TIMESTAMPTZ := now();
+    v_items_restored INTEGER := 0;
+BEGIN
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order % not found', p_order_id;
+    END IF;
+
+    IF v_order.status IN ('cancelled', 'delivered', 'returned') THEN
+        RAISE EXCEPTION 'Order cannot be cancelled in status %', v_order.status;
+    END IF;
+
+    -- Only allow customer cancellation if status is 'pending' or 'confirmed'
+    -- (Staff can cancel other in-progress statuses)
+    IF NOT public.is_staff() AND v_order.status NOT IN ('pending', 'confirmed') THEN
+        RAISE EXCEPTION 'Order is already being prepared or dispatched and cannot be cancelled online';
+    END IF;
+
+    -- Restore stock for each item in the order
+    FOR v_item IN
+        SELECT * FROM public.order_items WHERE order_id = p_order_id
+    LOOP
+        IF v_item.product_id IS NOT NULL THEN
+            SELECT stock_quantity, purchase_cost INTO v_prod
+            FROM public.products
+            WHERE id = v_item.product_id
+            FOR UPDATE;
+
+            IF FOUND THEN
+                v_current_stock := v_prod.stock_quantity;
+                v_new_stock := v_current_stock + v_item.quantity;
+
+                UPDATE public.products
+                SET stock_quantity = v_new_stock,
+                    updated_at = v_now
+                WHERE id = v_item.product_id;
+
+                INSERT INTO public.inventory_movements (
+                    product_id,
+                    movement_type,
+                    quantity,
+                    previous_stock,
+                    resulting_stock,
+                    reference_type,
+                    reference_id,
+                    unit_cost,
+                    notes,
+                    created_by
+                )
+                VALUES (
+                    v_item.product_id,
+                    'customer_return',
+                    v_item.quantity,
+                    v_current_stock,
+                    v_new_stock,
+                    'order_cancellation',
+                    p_order_id,
+                    v_prod.purchase_cost,
+                    'Order Cancellation: ' || COALESCE(p_reason, 'Customer cancelled'),
+                    p_user_id
+                );
+
+                v_items_restored := v_items_restored + 1;
+            END IF;
+        END IF;
+    END LOOP;
+
+    -- Update order status
+    UPDATE public.orders
+    SET status = 'cancelled',
+        updated_at = v_now
+    WHERE id = p_order_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'order_number', v_order.order_number,
+        'items_restored', v_items_restored
+    );
+END;
+$$;
+
+-- 8. ROW LEVEL SECURITY (RLS) POLICIES FOR STOREFRONT
+
+-- Enable RLS on customer_addresses
+ALTER TABLE public.customer_addresses ENABLE ROW LEVEL SECURITY;
+
+-- 8.1 CUSTOMER ADDRESSES POLICIES
+DROP POLICY IF EXISTS "customer_addresses_select" ON public.customer_addresses;
+CREATE POLICY "customer_addresses_select" ON public.customer_addresses
+    FOR SELECT USING (
+        public.is_staff()
+        OR customer_id IN (
+            SELECT id FROM public.customers WHERE auth_user_id = auth.uid()
+        )
+    );
+
+DROP POLICY IF EXISTS "customer_addresses_insert" ON public.customer_addresses;
+CREATE POLICY "customer_addresses_insert" ON public.customer_addresses
+    FOR INSERT WITH CHECK (
+        public.is_staff()
+        OR customer_id IN (
+            SELECT id FROM public.customers WHERE auth_user_id = auth.uid()
+        )
+    );
+
+DROP POLICY IF EXISTS "customer_addresses_update" ON public.customer_addresses;
+CREATE POLICY "customer_addresses_update" ON public.customer_addresses
+    FOR UPDATE USING (
+        public.is_staff()
+        OR customer_id IN (
+            SELECT id FROM public.customers WHERE auth_user_id = auth.uid()
+        )
+    ) WITH CHECK (
+        public.is_staff()
+        OR customer_id IN (
+            SELECT id FROM public.customers WHERE auth_user_id = auth.uid()
+        )
+    );
+
+DROP POLICY IF EXISTS "customer_addresses_delete" ON public.customer_addresses;
+CREATE POLICY "customer_addresses_delete" ON public.customer_addresses
+    FOR DELETE USING (
+        public.is_staff()
+        OR customer_id IN (
+            SELECT id FROM public.customers WHERE auth_user_id = auth.uid()
+        )
+    );
+
+-- 8.2 CUSTOMERS TABLE POLICIES (Allow customer to access their own customer record)
+DROP POLICY IF EXISTS "customers_select_policy" ON public.customers;
+CREATE POLICY "customers_select_policy" ON public.customers
+    FOR SELECT USING (
+        public.is_staff()
+        OR (auth_user_id IS NOT NULL AND auth_user_id = auth.uid())
+    );
+
+DROP POLICY IF EXISTS "customers_customer_update" ON public.customers;
+CREATE POLICY "customers_customer_update" ON public.customers
+    FOR UPDATE USING (
+        public.is_staff()
+        OR (auth_user_id IS NOT NULL AND auth_user_id = auth.uid())
+    ) WITH CHECK (
+        public.is_staff()
+        OR (auth_user_id IS NOT NULL AND auth_user_id = auth.uid())
+    );
+
+DROP POLICY IF EXISTS "customers_customer_insert" ON public.customers;
+CREATE POLICY "customers_customer_insert" ON public.customers
+    FOR INSERT WITH CHECK (
+        public.is_staff()
+        OR (auth_user_id IS NOT NULL AND auth_user_id = auth.uid())
+    );
+
+-- 8.3 ORDERS POLICIES (Allow customers to read their own orders)
+DROP POLICY IF EXISTS "orders_select_policy" ON public.orders;
+CREATE POLICY "orders_select_policy" ON public.orders
+    FOR SELECT USING (
+        public.is_staff()
+        OR customer_id IN (
+            SELECT id FROM public.customers WHERE auth_user_id = auth.uid()
+        )
+    );
+
+-- 8.4 ORDER ITEMS POLICIES (Allow customers to read items of their own orders)
+DROP POLICY IF EXISTS "order_items_select_policy" ON public.order_items;
+CREATE POLICY "order_items_select_policy" ON public.order_items
+    FOR SELECT USING (
+        public.is_staff()
+        OR order_id IN (
+            SELECT id FROM public.orders WHERE customer_id IN (
+                SELECT id FROM public.customers WHERE auth_user_id = auth.uid()
+            )
+        )
+    );
+
+-- <<< END FILE: 20261006000002_phase6_customer_storefront.sql <<<
+
+-- >>> FILE: 20261006000003_phase7_order_fulfillment.sql >>>
+-- ==============================================================================
+-- BAQQALA GROCERY OPERATING SYSTEM & CUSTOMER PLATFORM
+-- Phase 7: Order Management, Fulfillment & Delivery Operations
+-- Zone 19, Abu Dhabi
+-- ==============================================================================
+
+-- 1. EXTEND order_status ENUM WITH 'failed_delivery' IF NOT PRESENT
+DO $$ BEGIN
+    ALTER TYPE public.order_status ADD VALUE IF NOT EXISTS 'failed_delivery';
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- 2. OPERATIONAL FIELDS ON orders TABLE
+ALTER TABLE public.orders
+    ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS preparing_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS ready_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS out_for_delivery_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+    ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS failure_reason TEXT,
+    ADD COLUMN IF NOT EXISTS assigned_driver_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS internal_notes TEXT,
+    ADD COLUMN IF NOT EXISTS recipient_name TEXT,
+    ADD COLUMN IF NOT EXISTS recipient_phone TEXT;
+
+-- Indexes for efficient admin queue filtering
+CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON public.orders(payment_status);
+CREATE INDEX IF NOT EXISTS idx_orders_driver ON public.orders(assigned_driver_id);
+CREATE INDEX IF NOT EXISTS idx_orders_order_date ON public.orders(order_date DESC);
+
+-- 3. ITEM-LEVEL FULFILLMENT FIELDS ON order_items
+ALTER TABLE public.order_items
+    ADD COLUMN IF NOT EXISTS fulfillment_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (fulfillment_status IN ('pending', 'picked', 'packed', 'unavailable')),
+    ADD COLUMN IF NOT EXISTS prepared_quantity NUMERIC(12, 3) NOT NULL DEFAULT 0.000
+        CHECK (prepared_quantity >= 0);
+
+-- 4. ORDER STATUS HISTORY TABLE
+CREATE TABLE IF NOT EXISTS public.order_status_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    from_status public.order_status,
+    to_status public.order_status NOT NULL,
+    changed_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    reason TEXT,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_status_history_order ON public.order_status_history(order_id, created_at ASC);
+
+-- Enable RLS on order_status_history
+ALTER TABLE public.order_status_history ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "order_status_history_staff_select" ON public.order_status_history;
+CREATE POLICY "order_status_history_staff_select" ON public.order_status_history
+    FOR SELECT USING (public.is_staff());
+
+DROP POLICY IF EXISTS "order_status_history_customer_select" ON public.order_status_history;
+CREATE POLICY "order_status_history_customer_select" ON public.order_status_history
+    FOR SELECT USING (
+        EXISTS (
+            SELECT 1 FROM public.orders o
+            JOIN public.customers c ON c.id = o.customer_id
+            WHERE o.id = order_status_history.order_id
+            AND c.auth_user_id = auth.uid()
+        )
+    );
+
+DROP POLICY IF EXISTS "order_status_history_insert" ON public.order_status_history;
+CREATE POLICY "order_status_history_insert" ON public.order_status_history
+    FOR INSERT WITH CHECK (public.is_staff());
+
+-- 5. ORDER NOTES TABLE (Internal and customer visible notes)
+CREATE TABLE IF NOT EXISTS public.order_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    author_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    note TEXT NOT NULL,
+    visibility TEXT NOT NULL DEFAULT 'internal' CHECK (visibility IN ('internal', 'customer')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_notes_order ON public.order_notes(order_id, created_at DESC);
+
+-- Enable RLS on order_notes
+ALTER TABLE public.order_notes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "order_notes_staff_all" ON public.order_notes;
+CREATE POLICY "order_notes_staff_all" ON public.order_notes
+    FOR ALL USING (public.is_staff()) WITH CHECK (public.is_staff());
+
+DROP POLICY IF EXISTS "order_notes_customer_select" ON public.order_notes;
+CREATE POLICY "order_notes_customer_select" ON public.order_notes
+    FOR SELECT USING (
+        visibility = 'customer' AND
+        EXISTS (
+            SELECT 1 FROM public.orders o
+            JOIN public.customers c ON c.id = o.customer_id
+            WHERE o.id = order_notes.order_id
+            AND c.auth_user_id = auth.uid()
+        )
+    );
+
+-- 6. DELIVERIES TABLE (Dedicated delivery tracking)
+CREATE TABLE IF NOT EXISTS public.deliveries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE UNIQUE,
+    assigned_to UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'unassigned'
+        CHECK (status IN ('unassigned', 'assigned', 'out_for_delivery', 'delivered', 'failed')),
+    delivery_address TEXT NOT NULL,
+    recipient_name TEXT,
+    recipient_phone TEXT,
+    delivery_notes TEXT,
+    assigned_at TIMESTAMPTZ,
+    picked_up_at TIMESTAMPTZ,
+    delivered_at TIMESTAMPTZ,
+    failed_at TIMESTAMPTZ,
+    failure_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_deliveries_order ON public.deliveries(order_id);
+CREATE INDEX IF NOT EXISTS idx_deliveries_status ON public.deliveries(status);
+CREATE INDEX IF NOT EXISTS idx_deliveries_assigned_to ON public.deliveries(assigned_to);
+
+-- Enable RLS on deliveries
+ALTER TABLE public.deliveries ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "deliveries_staff_all" ON public.deliveries;
+CREATE POLICY "deliveries_staff_all" ON public.deliveries
+    FOR ALL USING (public.is_staff()) WITH CHECK (public.is_staff());
+
+DROP POLICY IF EXISTS "deliveries_customer_select" ON public.deliveries;
+CREATE POLICY "deliveries_customer_select" ON public.deliveries
+    FOR SELECT USING (
+        EXISTS (
+            SELECT 1 FROM public.orders o
+            JOIN public.customers c ON c.id = o.customer_id
+            WHERE o.id = deliveries.order_id
+            AND c.auth_user_id = auth.uid()
+        )
+    );
+
+-- 7. ATOMIC STATE TRANSITION RPC
+-- Concurrency safe with row-level locks, transition validation, status history, and notifications.
+-- CRITICAL RULE: Stock is NOT mutated during normal delivery progression because stock was already reserved/deducted at checkout!
+CREATE OR REPLACE FUNCTION public.transition_order_status_atomic(
+    p_order_id UUID,
+    p_next_status public.order_status,
+    p_reason TEXT DEFAULT NULL,
+    p_notes TEXT DEFAULT NULL,
+    p_driver_id UUID DEFAULT NULL,
+    p_failure_reason TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order RECORD;
+    v_actor_id UUID;
+    v_now TIMESTAMPTZ := now();
+    v_delivery_status TEXT;
+    v_notif_title TEXT;
+    v_notif_msg TEXT;
+    v_customer_user_id UUID;
+BEGIN
+    -- 1. Identify actor (must be staff)
+    v_actor_id := auth.uid();
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Unauthorized: Only staff can transition order status';
+    END IF;
+
+    -- 2. Lock target order row FOR UPDATE
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order % not found', p_order_id;
+    END IF;
+
+    -- 3. Idempotency check: if order is already in the requested status, return early
+    IF v_order.status = p_next_status THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'message', 'Order already in target status',
+            'order_id', p_order_id,
+            'status', p_next_status
+        );
+    END IF;
+
+    -- 4. State Machine Validation
+    -- Allowed transitions:
+    -- pending -> confirmed | cancelled
+    -- confirmed -> preparing | cancelled
+    -- preparing -> ready | cancelled
+    -- ready -> out_for_delivery | cancelled
+    -- out_for_delivery -> delivered | failed_delivery
+    -- failed_delivery -> out_for_delivery | cancelled
+    -- Terminal states: delivered, cancelled (cannot transition out)
+    IF v_order.status = 'delivered' THEN
+        RAISE EXCEPTION 'Order % has already been delivered and cannot be modified', v_order.order_number;
+    END IF;
+
+    IF v_order.status = 'cancelled' THEN
+        RAISE EXCEPTION 'Order % is cancelled and cannot be transitioned', v_order.order_number;
+    END IF;
+
+    -- Validate specific progression
+    IF p_next_status = 'confirmed' AND v_order.status != 'pending' THEN
+        RAISE EXCEPTION 'Cannot confirm order from status %', v_order.status;
+    ELSIF p_next_status = 'preparing' AND v_order.status != 'confirmed' THEN
+        RAISE EXCEPTION 'Cannot start preparation from status %. Must be confirmed first.', v_order.status;
+    ELSIF p_next_status = 'ready' AND v_order.status != 'preparing' THEN
+        RAISE EXCEPTION 'Cannot mark order ready from status %. Must be preparing first.', v_order.status;
+    ELSIF p_next_status = 'out_for_delivery' AND v_order.status NOT IN ('ready', 'failed_delivery') THEN
+        RAISE EXCEPTION 'Cannot dispatch order from status %. Must be ready first.', v_order.status;
+    ELSIF p_next_status = 'delivered' AND v_order.status != 'out_for_delivery' THEN
+        RAISE EXCEPTION 'Cannot mark delivered from status %. Must be out for delivery.', v_order.status;
+    ELSIF p_next_status = 'failed_delivery' AND v_order.status != 'out_for_delivery' THEN
+        RAISE EXCEPTION 'Cannot mark delivery failed from status %. Must be out for delivery.', v_order.status;
+    END IF;
+
+    -- 5. Prepare timestamp and operational field updates
+    IF p_next_status = 'confirmed' THEN
+        UPDATE public.orders
+        SET status = p_next_status,
+            confirmed_at = COALESCE(confirmed_at, v_now),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Confirmed';
+        v_notif_msg := 'Order ' || v_order.order_number || ' has been confirmed by Baqqala staff.';
+
+    ELSIF p_next_status = 'preparing' THEN
+        UPDATE public.orders
+        SET status = p_next_status,
+            preparing_at = COALESCE(preparing_at, v_now),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Being Prepared';
+        v_notif_msg := 'We are packing the items for order ' || v_order.order_number || '.';
+
+    ELSIF p_next_status = 'ready' THEN
+        UPDATE public.orders
+        SET status = p_next_status,
+            ready_at = COALESCE(ready_at, v_now),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Ready for Delivery';
+        v_notif_msg := 'Order ' || v_order.order_number || ' is packed and awaiting dispatch.';
+
+    ELSIF p_next_status = 'out_for_delivery' THEN
+        IF p_driver_id IS NOT NULL THEN
+            UPDATE public.orders
+            SET assigned_driver_id = p_driver_id
+            WHERE id = p_order_id;
+        END IF;
+
+        UPDATE public.orders
+        SET status = p_next_status,
+            out_for_delivery_at = COALESCE(out_for_delivery_at, v_now),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Out for Delivery';
+        v_notif_msg := 'Your grocery order ' || v_order.order_number || ' is on its way to your Zone 19 address.';
+
+    ELSIF p_next_status = 'delivered' THEN
+        UPDATE public.orders
+        SET status = p_next_status,
+            delivered_at = COALESCE(delivered_at, v_now),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Delivered';
+        v_notif_msg := 'Order ' || v_order.order_number || ' has been successfully delivered. Thank you!';
+
+    ELSIF p_next_status = 'failed_delivery' THEN
+        UPDATE public.orders
+        SET status = p_next_status,
+            failed_at = v_now,
+            failure_reason = COALESCE(p_failure_reason, 'Delivery attempt unsuccessful'),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Delivery Exception';
+        v_notif_msg := 'Delivery could not be completed for order ' || v_order.order_number || '. Staff will contact you.';
+
+    ELSIF p_next_status = 'cancelled' THEN
+        RAISE EXCEPTION 'Please use cancel_order_staff_atomic for cancellation to handle stock restoration';
+    END IF;
+
+    -- 6. Synchronize deliveries record
+    IF p_next_status = 'out_for_delivery' THEN
+        v_delivery_status := 'out_for_delivery';
+    ELSIF p_next_status = 'delivered' THEN
+        v_delivery_status := 'delivered';
+    ELSIF p_next_status = 'failed_delivery' THEN
+        v_delivery_status := 'failed';
+    ELSIF p_driver_id IS NOT NULL OR v_order.assigned_driver_id IS NOT NULL THEN
+        v_delivery_status := 'assigned';
+    ELSE
+        v_delivery_status := 'unassigned';
+    END IF;
+
+    INSERT INTO public.deliveries (
+        order_id,
+        assigned_to,
+        status,
+        delivery_address,
+        recipient_name,
+        recipient_phone,
+        delivery_notes,
+        assigned_at,
+        picked_up_at,
+        delivered_at,
+        failed_at,
+        failure_reason,
+        updated_at
+    )
+    VALUES (
+        p_order_id,
+        COALESCE(p_driver_id, v_order.assigned_driver_id),
+        v_delivery_status,
+        v_order.delivery_address,
+        v_order.recipient_name,
+        v_order.recipient_phone,
+        v_order.delivery_notes,
+        CASE WHEN (p_driver_id IS NOT NULL OR v_order.assigned_driver_id IS NOT NULL) THEN v_now ELSE NULL END,
+        CASE WHEN p_next_status = 'out_for_delivery' THEN v_now ELSE NULL END,
+        CASE WHEN p_next_status = 'delivered' THEN v_now ELSE NULL END,
+        CASE WHEN p_next_status = 'failed_delivery' THEN v_now ELSE NULL END,
+        CASE WHEN p_next_status = 'failed_delivery' THEN p_failure_reason ELSE NULL END,
+        v_now
+    )
+    ON CONFLICT (order_id) DO UPDATE
+    SET assigned_to = COALESCE(p_driver_id, deliveries.assigned_to),
+        status = v_delivery_status,
+        assigned_at = CASE WHEN (p_driver_id IS NOT NULL AND deliveries.assigned_at IS NULL) THEN v_now ELSE deliveries.assigned_at END,
+        picked_up_at = CASE WHEN p_next_status = 'out_for_delivery' THEN v_now ELSE deliveries.picked_up_at END,
+        delivered_at = CASE WHEN p_next_status = 'delivered' THEN v_now ELSE deliveries.delivered_at END,
+        failed_at = CASE WHEN p_next_status = 'failed_delivery' THEN v_now ELSE deliveries.failed_at END,
+        failure_reason = CASE WHEN p_next_status = 'failed_delivery' THEN p_failure_reason ELSE deliveries.failure_reason END,
+        updated_at = v_now;
+
+    -- 7. Record Order Status History
+    INSERT INTO public.order_status_history (
+        order_id,
+        from_status,
+        to_status,
+        changed_by,
+        reason,
+        notes
+    )
+    VALUES (
+        p_order_id,
+        v_order.status,
+        p_next_status,
+        v_actor_id,
+        p_reason,
+        p_notes
+    );
+
+    -- 8. Customer Notification
+    SELECT auth_user_id INTO v_customer_user_id
+    FROM public.customers
+    WHERE id = v_order.customer_id;
+
+    IF v_customer_user_id IS NOT NULL THEN
+        INSERT INTO public.notifications (
+            user_id,
+            title,
+            message,
+            type,
+            link,
+            entity_type,
+            entity_id
+        )
+        VALUES (
+            v_customer_user_id,
+            v_notif_title,
+            v_notif_msg,
+            CASE WHEN p_next_status = 'failed_delivery' THEN 'warning' ELSE 'info' END,
+            '/account/orders/' || p_order_id,
+            'orders',
+            p_order_id
+        );
+    END IF;
+
+    -- 9. Audit Logging
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values
+    )
+    VALUES (
+        v_actor_id,
+        'order_status_transition',
+        'orders',
+        p_order_id,
+        jsonb_build_object('status', v_order.status),
+        jsonb_build_object('status', p_next_status, 'driver_id', p_driver_id, 'reason', p_reason)
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'from_status', v_order.status,
+        'to_status', p_next_status,
+        'timestamp', v_now
+    );
+END;
+$$;
+
+-- 8. ASSIGN DELIVERY DRIVER RPC
+CREATE OR REPLACE FUNCTION public.assign_order_delivery_atomic(
+    p_order_id UUID,
+    p_driver_id UUID,
+    p_notes TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order RECORD;
+    v_driver RECORD;
+    v_actor_id UUID;
+    v_now TIMESTAMPTZ := now();
+BEGIN
+    v_actor_id := auth.uid();
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Unauthorized: Only staff can assign delivery personnel';
+    END IF;
+
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order % not found', p_order_id;
+    END IF;
+
+    IF v_order.status IN ('delivered', 'cancelled') THEN
+        RAISE EXCEPTION 'Cannot assign driver to order in status %', v_order.status;
+    END IF;
+
+    SELECT * INTO v_driver
+    FROM public.profiles
+    WHERE id = p_driver_id AND is_active = true;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Active driver profile % not found', p_driver_id;
+    END IF;
+
+    -- Update order assigned driver
+    UPDATE public.orders
+    SET assigned_driver_id = p_driver_id,
+        updated_at = v_now
+    WHERE id = p_order_id;
+
+    -- Update or create delivery record
+    INSERT INTO public.deliveries (
+        order_id,
+        assigned_to,
+        status,
+        delivery_address,
+        recipient_name,
+        recipient_phone,
+        delivery_notes,
+        assigned_at,
+        updated_at
+    )
+    VALUES (
+        p_order_id,
+        p_driver_id,
+        'assigned',
+        v_order.delivery_address,
+        v_order.recipient_name,
+        v_order.recipient_phone,
+        COALESCE(p_notes, v_order.delivery_notes),
+        v_now,
+        v_now
+    )
+    ON CONFLICT (order_id) DO UPDATE
+    SET assigned_to = p_driver_id,
+        status = CASE WHEN deliveries.status = 'unassigned' THEN 'assigned' ELSE deliveries.status END,
+        assigned_at = v_now,
+        delivery_notes = COALESCE(p_notes, deliveries.delivery_notes),
+        updated_at = v_now;
+
+    -- Audit log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values
+    )
+    VALUES (
+        v_actor_id,
+        'order_assign_driver',
+        'orders',
+        p_order_id,
+        jsonb_build_object('assigned_driver_id', v_order.assigned_driver_id),
+        jsonb_build_object('assigned_driver_id', p_driver_id, 'driver_name', v_driver.full_name)
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'assigned_driver_id', p_driver_id,
+        'driver_name', v_driver.full_name
+    );
+END;
+$$;
+
+-- 9. ITEM FULFILLMENT CHECKLIST RPC
+CREATE OR REPLACE FUNCTION public.update_item_fulfillment_atomic(
+    p_order_id UUID,
+    p_item_id UUID,
+    p_status TEXT,
+    p_prepared_qty NUMERIC DEFAULT 0
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_item RECORD;
+BEGIN
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Unauthorized: Only staff can update item fulfillment status';
+    END IF;
+
+    IF p_status NOT IN ('pending', 'picked', 'packed', 'unavailable') THEN
+        RAISE EXCEPTION 'Invalid fulfillment status: %', p_status;
+    END IF;
+
+    SELECT * INTO v_item
+    FROM public.order_items
+    WHERE id = p_item_id AND order_id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order item % not found in order %', p_item_id, p_order_id;
+    END IF;
+
+    UPDATE public.order_items
+    SET fulfillment_status = p_status,
+        prepared_quantity = COALESCE(p_prepared_qty, v_item.quantity)
+    WHERE id = p_item_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'item_id', p_item_id,
+        'status', p_status,
+        'prepared_quantity', COALESCE(p_prepared_qty, v_item.quantity)
+    );
+END;
+$$;
+
+-- 10. PAYMENT COLLECTION RPC (For Cash/Card on Delivery upon arrival)
+CREATE OR REPLACE FUNCTION public.collect_order_payment_atomic(
+    p_order_id UUID,
+    p_amount NUMERIC,
+    p_payment_method public.payment_method,
+    p_reference TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order RECORD;
+    v_actor_id UUID;
+    v_now TIMESTAMPTZ := now();
+BEGIN
+    v_actor_id := auth.uid();
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Unauthorized: Only staff can record payment collection';
+    END IF;
+
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order % not found', p_order_id;
+    END IF;
+
+    IF v_order.payment_status = 'paid' THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'message', 'Order already paid',
+            'order_id', p_order_id
+        );
+    END IF;
+
+    IF p_amount <= 0 THEN
+        RAISE EXCEPTION 'Payment amount must be greater than zero';
+    END IF;
+
+    IF p_amount > v_order.total_amount THEN
+        RAISE EXCEPTION 'Collected amount (AED %) exceeds total order amount (AED %)', p_amount, v_order.total_amount;
+    END IF;
+
+    UPDATE public.orders
+    SET payment_status = 'paid',
+        payment_method = p_payment_method,
+        updated_at = v_now
+    WHERE id = p_order_id;
+
+    -- Audit log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values
+    )
+    VALUES (
+        v_actor_id,
+        'order_payment_collected',
+        'orders',
+        p_order_id,
+        jsonb_build_object('payment_status', v_order.payment_status),
+        jsonb_build_object(
+            'payment_status', 'paid',
+            'amount', p_amount,
+            'method', p_payment_method,
+            'reference', p_reference
+        )
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'payment_status', 'paid',
+        'amount', p_amount
+    );
+END;
+$$;
+
+-- 11. STAFF CANCELLATION RPC (With atomic stock restoration and movement ledger)
+CREATE OR REPLACE FUNCTION public.cancel_order_staff_atomic(
+    p_order_id UUID,
+    p_reason TEXT,
+    p_restock BOOLEAN DEFAULT TRUE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order RECORD;
+    v_item RECORD;
+    v_prod RECORD;
+    v_current_stock NUMERIC(12, 3);
+    v_new_stock NUMERIC(12, 3);
+    v_now TIMESTAMPTZ := now();
+    v_actor_id UUID;
+    v_items_restored INTEGER := 0;
+    v_customer_user_id UUID;
+BEGIN
+    v_actor_id := auth.uid();
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Unauthorized: Only staff can perform administrative cancellation';
+    END IF;
+
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order % not found', p_order_id;
+    END IF;
+
+    IF v_order.status = 'cancelled' THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'message', 'Order is already cancelled',
+            'order_id', p_order_id
+        );
+    END IF;
+
+    IF v_order.status = 'delivered' THEN
+        RAISE EXCEPTION 'Cannot cancel order % because it has already been delivered', v_order.order_number;
+    END IF;
+
+    -- If restock is requested, atomically restore inventory and append immutable ledger rows
+    IF p_restock THEN
+        FOR v_item IN
+            SELECT * FROM public.order_items WHERE order_id = p_order_id
+        LOOP
+            IF v_item.product_id IS NOT NULL THEN
+                SELECT stock_quantity, purchase_cost INTO v_prod
+                FROM public.products
+                WHERE id = v_item.product_id
+                FOR UPDATE;
+
+                IF FOUND THEN
+                    v_current_stock := v_prod.stock_quantity;
+                    v_new_stock := v_current_stock + v_item.quantity;
+
+                    UPDATE public.products
+                    SET stock_quantity = v_new_stock,
+                        updated_at = v_now
+                    WHERE id = v_item.product_id;
+
+                    INSERT INTO public.inventory_movements (
+                        product_id,
+                        movement_type,
+                        quantity,
+                        previous_stock,
+                        resulting_stock,
+                        reference_type,
+                        reference_id,
+                        unit_cost,
+                        notes,
+                        created_by
+                    )
+                    VALUES (
+                        v_item.product_id,
+                        'customer_return',
+                        v_item.quantity,
+                        v_current_stock,
+                        v_new_stock,
+                        'order_cancellation',
+                        p_order_id,
+                        v_prod.purchase_cost,
+                        'Staff cancellation of ' || v_order.order_number || ': ' || COALESCE(p_reason, 'Admin cancelled'),
+                        v_actor_id
+                    );
+
+                    v_items_restored := v_items_restored + 1;
+                END IF;
+            END IF;
+        END LOOP;
+    END IF;
+
+    -- Update order status
+    UPDATE public.orders
+    SET status = 'cancelled',
+        cancelled_at = v_now,
+        cancellation_reason = p_reason,
+        updated_at = v_now
+    WHERE id = p_order_id;
+
+    -- Update deliveries status if exists
+    UPDATE public.deliveries
+    SET status = 'failed',
+        failure_reason = 'Order cancelled by store: ' || COALESCE(p_reason, ''),
+        failed_at = v_now,
+        updated_at = v_now
+    WHERE order_id = p_order_id;
+
+    -- Record Status History
+    INSERT INTO public.order_status_history (
+        order_id,
+        from_status,
+        to_status,
+        changed_by,
+        reason,
+        notes
+    )
+    VALUES (
+        p_order_id,
+        v_order.status,
+        'cancelled',
+        v_actor_id,
+        p_reason,
+        'Admin cancellation. Stock restored: ' || CASE WHEN p_restock THEN 'yes' ELSE 'no' END
+    );
+
+    -- Customer Notification
+    SELECT auth_user_id INTO v_customer_user_id
+    FROM public.customers
+    WHERE id = v_order.customer_id;
+
+    IF v_customer_user_id IS NOT NULL THEN
+        INSERT INTO public.notifications (
+            user_id,
+            title,
+            message,
+            type,
+            link,
+            entity_type,
+            entity_id
+        )
+        VALUES (
+            v_customer_user_id,
+            'Order Cancelled',
+            'Order ' || v_order.order_number || ' has been cancelled. Reason: ' || COALESCE(p_reason, 'Store cancelled'),
+            'warning',
+            '/account/orders/' || p_order_id,
+            'orders',
+            p_order_id
+        );
+    END IF;
+
+    -- Audit Log
+    INSERT INTO public.audit_logs (
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values
+    )
+    VALUES (
+        v_actor_id,
+        'order_cancelled_staff',
+        'orders',
+        p_order_id,
+        jsonb_build_object('status', v_order.status),
+        jsonb_build_object(
+            'status', 'cancelled',
+            'reason', p_reason,
+            'restocked_items', v_items_restored
+        )
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'items_restored', v_items_restored,
+        'status', 'cancelled'
+    );
+END;
+$$;
+
+-- 12. INTERNAL ORDER NOTES RPC
+CREATE OR REPLACE FUNCTION public.add_order_note_atomic(
+    p_order_id UUID,
+    p_note TEXT,
+    p_visibility TEXT DEFAULT 'internal'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_actor_id UUID;
+    v_note_id UUID;
+BEGIN
+    v_actor_id := auth.uid();
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Unauthorized: Only staff can add order notes';
+    END IF;
+
+    IF p_visibility NOT IN ('internal', 'customer') THEN
+        RAISE EXCEPTION 'Invalid note visibility: %', p_visibility;
+    END IF;
+
+    INSERT INTO public.order_notes (
+        order_id,
+        author_id,
+        note,
+        visibility
+    )
+    VALUES (
+        p_order_id,
+        v_actor_id,
+        p_note,
+        p_visibility
+    )
+    RETURNING id INTO v_note_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'note_id', v_note_id,
+        'order_id', p_order_id
+    );
+END;
+$$;
+
+-- <<< END FILE: 20261006000003_phase7_order_fulfillment.sql <<<
+
+-- >>> FILE: 20261006000004_phase8_promotions_pricing_loyalty.sql >>>
+-- ==============================================================================
+-- BAQQALA GROCERY OPERATING SYSTEM & CUSTOMER PLATFORM
+-- Phase 8: Promotions, Pricing, Discounts & Customer Loyalty
+-- Zone 19, Abu Dhabi
+-- ==============================================================================
+
+-- 1. PROMOTIONS TABLE
+CREATE TABLE IF NOT EXISTS public.promotions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    description TEXT,
+    promotion_type TEXT NOT NULL CHECK (promotion_type IN ('product', 'category', 'cart', 'first_order', 'buy_x_get_y', 'minimum_spend')),
+    discount_type TEXT NOT NULL CHECK (discount_type IN ('percentage', 'fixed_amount', 'free_item')),
+    discount_value NUMERIC(12, 2) NOT NULL CHECK (discount_value >= 0),
+    minimum_order_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (minimum_order_amount >= 0),
+    maximum_discount_amount NUMERIC(12, 2) CHECK (maximum_discount_amount IS NULL OR maximum_discount_amount >= 0),
+    buy_quantity INTEGER CHECK (buy_quantity IS NULL OR buy_quantity > 0),
+    get_quantity INTEGER CHECK (get_quantity IS NULL OR get_quantity > 0),
+    start_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    end_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft', 'scheduled', 'active', 'paused', 'expired', 'archived')),
+    usage_limit INTEGER CHECK (usage_limit IS NULL OR usage_limit >= 0),
+    usage_count INTEGER NOT NULL DEFAULT 0 CHECK (usage_count >= 0),
+    per_customer_limit INTEGER CHECK (per_customer_limit IS NULL OR per_customer_limit >= 0),
+    is_exclusive BOOLEAN NOT NULL DEFAULT FALSE,
+    banner_text TEXT,
+    created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_promotions_status ON public.promotions(status);
+CREATE INDEX IF NOT EXISTS idx_promotions_dates ON public.promotions(start_at, end_at);
+CREATE INDEX IF NOT EXISTS idx_promotions_type ON public.promotions(promotion_type);
+
+-- 2. PROMOTION PRODUCTS JUNCTION
+CREATE TABLE IF NOT EXISTS public.promotion_products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    promotion_id UUID NOT NULL REFERENCES public.promotions(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(promotion_id, product_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_promo_products_prod ON public.promotion_products(product_id);
+
+-- 3. PROMOTION CATEGORIES JUNCTION
+CREATE TABLE IF NOT EXISTS public.promotion_categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    promotion_id UUID NOT NULL REFERENCES public.promotions(id) ON DELETE CASCADE,
+    category_id UUID NOT NULL REFERENCES public.categories(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(promotion_id, category_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_promo_categories_cat ON public.promotion_categories(category_id);
+
+-- 4. COUPONS TABLE
+CREATE TABLE IF NOT EXISTS public.coupons (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code TEXT NOT NULL UNIQUE,
+    promotion_id UUID NOT NULL REFERENCES public.promotions(id) ON DELETE CASCADE,
+    usage_limit INTEGER CHECK (usage_limit IS NULL OR usage_limit >= 0),
+    usage_count INTEGER NOT NULL DEFAULT 0 CHECK (usage_count >= 0),
+    per_customer_limit INTEGER NOT NULL DEFAULT 1 CHECK (per_customer_limit >= 1),
+    minimum_order_amount NUMERIC(12, 2) CHECK (minimum_order_amount IS NULL OR minimum_order_amount >= 0),
+    maximum_discount_amount NUMERIC(12, 2) CHECK (maximum_discount_amount IS NULL OR maximum_discount_amount >= 0),
+    start_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    end_at TIMESTAMPTZ,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_coupons_code ON public.coupons(code);
+CREATE INDEX IF NOT EXISTS idx_coupons_active ON public.coupons(is_active);
+
+-- 5. COUPON REDEMPTIONS TABLE
+CREATE TABLE IF NOT EXISTS public.coupon_redemptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    coupon_id UUID NOT NULL REFERENCES public.coupons(id) ON DELETE RESTRICT,
+    customer_id UUID NOT NULL REFERENCES public.customers(id) ON DELETE RESTRICT,
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    discount_amount NUMERIC(12, 2) NOT NULL CHECK (discount_amount >= 0),
+    redeemed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(coupon_id, order_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_cust ON public.coupon_redemptions(customer_id);
+CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_coupon ON public.coupon_redemptions(coupon_id);
+CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_order ON public.coupon_redemptions(order_id);
+
+-- 6. CUSTOMER LOYALTY ACCOUNTS
+CREATE TABLE IF NOT EXISTS public.customer_loyalty_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id UUID NOT NULL REFERENCES public.customers(id) ON DELETE CASCADE UNIQUE,
+    points_balance INTEGER NOT NULL DEFAULT 0 CHECK (points_balance >= 0),
+    lifetime_points_earned INTEGER NOT NULL DEFAULT 0 CHECK (lifetime_points_earned >= 0),
+    lifetime_points_redeemed INTEGER NOT NULL DEFAULT 0 CHECK (lifetime_points_redeemed >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_loyalty_accounts_cust ON public.customer_loyalty_accounts(customer_id);
+
+-- 7. LOYALTY TRANSACTIONS LEDGER (IMMUTABLE)
+CREATE TABLE IF NOT EXISTS public.loyalty_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id UUID NOT NULL REFERENCES public.customers(id) ON DELETE RESTRICT,
+    order_id UUID REFERENCES public.orders(id) ON DELETE SET NULL,
+    transaction_type TEXT NOT NULL CHECK (transaction_type IN ('earn', 'redeem', 'expire', 'adjustment', 'reversal')),
+    points INTEGER NOT NULL,
+    balance_before INTEGER NOT NULL,
+    balance_after INTEGER NOT NULL,
+    reason TEXT,
+    created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_loyalty_transactions_cust ON public.loyalty_transactions(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_loyalty_transactions_order ON public.loyalty_transactions(order_id);
+
+-- 8. EXTEND orders TABLE FOR HISTORICAL COMMERCIAL SNAPSHOTS
+ALTER TABLE public.orders
+    ADD COLUMN IF NOT EXISTS promotion_discount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    ADD COLUMN IF NOT EXISTS coupon_discount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    ADD COLUMN IF NOT EXISTS loyalty_discount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    ADD COLUMN IF NOT EXISTS coupon_id UUID REFERENCES public.coupons(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS coupon_code_snapshot TEXT,
+    ADD COLUMN IF NOT EXISTS loyalty_points_redeemed INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS loyalty_points_earned INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS promotion_snapshots JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- 9. SEED DEFAULT LOYALTY SETTINGS IF MISSING
+INSERT INTO public.settings (key, value, updated_at)
+VALUES (
+    'loyalty_program',
+    '{"enabled": true, "points_per_aed": 1.0, "redemption_rate": 0.05, "min_redemption_points": 100}'::jsonb,
+    now()
+)
+ON CONFLICT (key) DO NOTHING;
+
+-- 10. ROW LEVEL SECURITY POLICIES
+
+-- Enable RLS
+ALTER TABLE public.promotions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.promotion_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.promotion_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.coupons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.coupon_redemptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.customer_loyalty_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.loyalty_transactions ENABLE ROW LEVEL SECURITY;
+
+-- Promotions: staff full access, customers/public read active promotions
+DROP POLICY IF EXISTS "promotions_staff_all" ON public.promotions;
+CREATE POLICY "promotions_staff_all" ON public.promotions
+    FOR ALL USING (public.is_staff()) WITH CHECK (public.is_staff());
+
+DROP POLICY IF EXISTS "promotions_public_select" ON public.promotions;
+CREATE POLICY "promotions_public_select" ON public.promotions
+    FOR SELECT USING (
+        status = 'active' AND
+        start_at <= now() AND
+        (end_at IS NULL OR end_at > now())
+    );
+
+-- Promotion products / categories: staff all, public select
+DROP POLICY IF EXISTS "promo_products_staff_all" ON public.promotion_products;
+CREATE POLICY "promo_products_staff_all" ON public.promotion_products
+    FOR ALL USING (public.is_staff()) WITH CHECK (public.is_staff());
+
+DROP POLICY IF EXISTS "promo_products_public_select" ON public.promotion_products;
+CREATE POLICY "promo_products_public_select" ON public.promotion_products
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "promo_categories_staff_all" ON public.promotion_categories;
+CREATE POLICY "promo_categories_staff_all" ON public.promotion_categories
+    FOR ALL USING (public.is_staff()) WITH CHECK (public.is_staff());
+
+DROP POLICY IF EXISTS "promo_categories_public_select" ON public.promotion_categories;
+CREATE POLICY "promo_categories_public_select" ON public.promotion_categories
+    FOR SELECT USING (true);
+
+-- Coupons: staff all, customers select active by exact query
+DROP POLICY IF EXISTS "coupons_staff_all" ON public.coupons;
+CREATE POLICY "coupons_staff_all" ON public.coupons
+    FOR ALL USING (public.is_staff()) WITH CHECK (public.is_staff());
+
+DROP POLICY IF EXISTS "coupons_public_select" ON public.coupons;
+CREATE POLICY "coupons_public_select" ON public.coupons
+    FOR SELECT USING (
+        is_active = true AND
+        start_at <= now() AND
+        (end_at IS NULL OR end_at > now())
+    );
+
+-- Coupon redemptions: staff all, customer select own
+DROP POLICY IF EXISTS "coupon_redemptions_staff_all" ON public.coupon_redemptions;
+CREATE POLICY "coupon_redemptions_staff_all" ON public.coupon_redemptions
+    FOR ALL USING (public.is_staff()) WITH CHECK (public.is_staff());
+
+DROP POLICY IF EXISTS "coupon_redemptions_customer_select" ON public.coupon_redemptions;
+CREATE POLICY "coupon_redemptions_customer_select" ON public.coupon_redemptions
+    FOR SELECT USING (
+        customer_id IN (
+            SELECT c.id FROM public.customers c WHERE c.auth_user_id = auth.uid()
+        )
+    );
+
+-- Loyalty accounts: staff all, customer select own
+DROP POLICY IF EXISTS "loyalty_accounts_staff_all" ON public.customer_loyalty_accounts;
+CREATE POLICY "loyalty_accounts_staff_all" ON public.customer_loyalty_accounts
+    FOR ALL USING (public.is_staff()) WITH CHECK (public.is_staff());
+
+DROP POLICY IF EXISTS "loyalty_accounts_customer_select" ON public.customer_loyalty_accounts;
+CREATE POLICY "loyalty_accounts_customer_select" ON public.customer_loyalty_accounts
+    FOR SELECT USING (
+        customer_id IN (
+            SELECT c.id FROM public.customers c WHERE c.auth_user_id = auth.uid()
+        )
+    );
+
+-- Loyalty transactions: staff all, customer select own
+DROP POLICY IF EXISTS "loyalty_transactions_staff_all" ON public.loyalty_transactions;
+CREATE POLICY "loyalty_transactions_staff_all" ON public.loyalty_transactions
+    FOR ALL USING (public.is_staff()) WITH CHECK (public.is_staff());
+
+DROP POLICY IF EXISTS "loyalty_transactions_customer_select" ON public.loyalty_transactions;
+CREATE POLICY "loyalty_transactions_customer_select" ON public.loyalty_transactions
+    FOR SELECT USING (
+        customer_id IN (
+            SELECT c.id FROM public.customers c WHERE c.auth_user_id = auth.uid()
+        )
+    );
+
+-- 11. MANUAL LOYALTY ADJUSTMENT RPC (STAFF ONLY)
+CREATE OR REPLACE FUNCTION public.adjust_loyalty_points_atomic(
+    p_customer_id UUID,
+    p_points INTEGER,
+    p_reason TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_actor_id UUID := auth.uid();
+    v_account RECORD;
+    v_new_balance INTEGER;
+    v_now TIMESTAMPTZ := now();
+BEGIN
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Unauthorized: Only staff can adjust loyalty points';
+    END IF;
+
+    IF p_points = 0 THEN
+        RAISE EXCEPTION 'Adjustment points cannot be zero';
+    END IF;
+
+    IF p_reason IS NULL OR length(trim(p_reason)) = 0 THEN
+        RAISE EXCEPTION 'A valid reason is required for loyalty adjustment';
+    END IF;
+
+    -- Lock or create loyalty account row FOR UPDATE
+    SELECT * INTO v_account
+    FROM public.customer_loyalty_accounts
+    WHERE customer_id = p_customer_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        INSERT INTO public.customer_loyalty_accounts (customer_id, points_balance, lifetime_points_earned, lifetime_points_redeemed, created_at, updated_at)
+        VALUES (p_customer_id, 0, 0, 0, v_now, v_now)
+        RETURNING * INTO v_account;
+    END IF;
+
+    v_new_balance := v_account.points_balance + p_points;
+
+    IF v_new_balance < 0 THEN
+        RAISE EXCEPTION 'Insufficient balance: Customer only has % points', v_account.points_balance;
+    END IF;
+
+    -- Update account
+    UPDATE public.customer_loyalty_accounts
+    SET points_balance = v_new_balance,
+        lifetime_points_earned = CASE WHEN p_points > 0 THEN v_account.lifetime_points_earned + p_points ELSE v_account.lifetime_points_earned END,
+        lifetime_points_redeemed = CASE WHEN p_points < 0 THEN v_account.lifetime_points_redeemed + abs(p_points) ELSE v_account.lifetime_points_redeemed END,
+        updated_at = v_now
+    WHERE customer_id = p_customer_id;
+
+    -- Append to immutable ledger
+    INSERT INTO public.loyalty_transactions (
+        customer_id,
+        order_id,
+        transaction_type,
+        points,
+        balance_before,
+        balance_after,
+        reason,
+        created_by,
+        created_at
+    )
+    VALUES (
+        p_customer_id,
+        NULL,
+        'adjustment',
+        p_points,
+        v_account.points_balance,
+        v_new_balance,
+        p_reason,
+        v_actor_id,
+        v_now
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'customer_id', p_customer_id,
+        'balance_before', v_account.points_balance,
+        'balance_after', v_new_balance,
+        'adjusted_points', p_points
+    );
+END;
+$$;
+
+-- 12. EXTENDED SERVER-AUTHORITATIVE ORDER CREATION RPC
+-- Seamlessly integrates product base pricing, promotional rules, coupon validation,
+-- atomic coupon redemption, loyalty redemption, tax calculation, and delivery fee
+CREATE OR REPLACE FUNCTION public.create_customer_order_atomic(
+    p_customer_id UUID,
+    p_items JSONB,
+    p_delivery_address TEXT,
+    p_delivery_notes TEXT DEFAULT NULL,
+    p_payment_method payment_method DEFAULT 'cash',
+    p_order_source order_source DEFAULT 'website',
+    p_user_id UUID DEFAULT NULL,
+    p_coupon_code TEXT DEFAULT NULL,
+    p_loyalty_points_to_redeem INTEGER DEFAULT 0
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order_id UUID;
+    v_order_number TEXT;
+    v_prod RECORD;
+    v_item_json JSONB;
+    v_product_id UUID;
+    v_quantity NUMERIC(12, 3);
+    v_base_unit_price NUMERIC(12, 2);
+    v_effective_unit_price NUMERIC(12, 2);
+    v_line_item_discount NUMERIC(12, 2);
+    v_line_total NUMERIC(12, 2);
+    v_subtotal NUMERIC(12, 2) := 0.00;
+    v_product_promo_discount NUMERIC(12, 2) := 0.00;
+    v_cart_promo_discount NUMERIC(12, 2) := 0.00;
+    v_coupon_discount NUMERIC(12, 2) := 0.00;
+    v_loyalty_discount NUMERIC(12, 2) := 0.00;
+    v_total_discount NUMERIC(12, 2) := 0.00;
+    v_tax_rate NUMERIC(5, 4) := 0.0500; -- 5% UAE standard VAT
+    v_taxable_subtotal NUMERIC(12, 2) := 0.00;
+    v_tax_amount NUMERIC(12, 2) := 0.00;
+    v_delivery_fee NUMERIC(12, 2) := 0.00;
+    v_grand_total NUMERIC(12, 2) := 0.00;
+    v_current_stock NUMERIC(12, 3);
+    v_new_stock NUMERIC(12, 3);
+    v_items_count INTEGER := 0;
+    v_now TIMESTAMPTZ := now();
+    v_year TEXT := to_char(CURRENT_DATE, 'YYYY');
+    v_seq_val BIGINT;
+    v_customer RECORD;
+    v_coupon RECORD;
+    v_coupon_normalized TEXT;
+    v_cust_coupon_uses INTEGER;
+    v_loyalty_acct RECORD;
+    v_loyalty_pts_rate NUMERIC(12, 2) := 0.05; -- 100 points = 5 AED (1 pt = 0.05 AED)
+    v_cart_promo RECORD;
+    v_promo_snapshots JSONB := '[]'::jsonb;
+BEGIN
+    -- 1. Validate customer if provided
+    IF p_customer_id IS NOT NULL THEN
+        SELECT id, name, mobile, total_orders, total_spend
+        INTO v_customer
+        FROM public.customers
+        WHERE id = p_customer_id;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Customer ID % not found', p_customer_id;
+        END IF;
+    END IF;
+
+    -- 2. Validate items array
+    IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
+        RAISE EXCEPTION 'Order items array cannot be empty';
+    END IF;
+
+    IF p_delivery_address IS NULL OR length(trim(p_delivery_address)) = 0 THEN
+        RAISE EXCEPTION 'Delivery address is required';
+    END IF;
+
+    -- 3. Generate sequential order number (ORD-YYYY-NNNNN)
+    SELECT nextval('public.seq_order_number') INTO v_seq_val;
+    v_order_number := 'ORD-' || v_year || '-' || lpad(v_seq_val::text, 5, '0');
+    v_order_id := gen_random_uuid();
+
+    -- 4. Process each item: Row-lock product, validate stock, compute authoritative price
+    FOR v_item_json IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        v_product_id := (v_item_json->>'product_id')::UUID;
+        v_quantity := (v_item_json->>'quantity')::NUMERIC(12, 3);
+
+        IF v_product_id IS NULL THEN
+            RAISE EXCEPTION 'Product ID cannot be null in order line';
+        END IF;
+
+        IF v_quantity IS NULL OR v_quantity <= 0 THEN
+            RAISE EXCEPTION 'Quantity must be greater than zero';
+        END IF;
+
+        -- Lock product row FOR UPDATE to prevent race conditions
+        SELECT id, name, selling_price, promo_price, purchase_cost, stock_quantity, is_active, archived_at, category_id
+        INTO v_prod
+        FROM public.products
+        WHERE id = v_product_id
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Product % does not exist', v_product_id;
+        END IF;
+
+        IF NOT v_prod.is_active OR v_prod.archived_at IS NOT NULL THEN
+            RAISE EXCEPTION 'Product "%" is no longer available for purchase', v_prod.name;
+        END IF;
+
+        -- Check stock availability
+        IF v_prod.stock_quantity < v_quantity THEN
+            RAISE EXCEPTION 'Insufficient stock for "%". Requested: %, Available: %',
+                v_prod.name, v_quantity, v_prod.stock_quantity;
+        END IF;
+
+        v_base_unit_price := v_prod.selling_price;
+        v_effective_unit_price := v_base_unit_price;
+
+        -- Check active product/category promotions
+        DECLARE
+            v_p RECORD;
+            v_calc_unit_price NUMERIC(12, 2);
+        BEGIN
+            -- Find highest active product discount or promo_price
+            IF v_prod.promo_price IS NOT NULL AND v_prod.promo_price > 0 AND v_prod.promo_price < v_base_unit_price THEN
+                v_effective_unit_price := v_prod.promo_price;
+            END IF;
+
+            -- Check if an active promotional rule applies to this product specifically
+            FOR v_p IN
+                SELECT p.*
+                FROM public.promotions p
+                JOIN public.promotion_products pp ON pp.promotion_id = p.id
+                WHERE pp.product_id = v_product_id
+                AND p.status = 'active'
+                AND p.start_at <= v_now
+                AND (p.end_at IS NULL OR p.end_at > v_now)
+                ORDER BY p.discount_value DESC
+                LIMIT 1
+            LOOP
+                IF v_p.discount_type = 'percentage' THEN
+                    v_calc_unit_price := round(v_base_unit_price * (1.0 - (v_p.discount_value / 100.0)), 2);
+                ELSIF v_p.discount_type = 'fixed_amount' THEN
+                    v_calc_unit_price := GREATEST(0.00, v_base_unit_price - v_p.discount_value);
+                END IF;
+
+                IF v_calc_unit_price < v_effective_unit_price THEN
+                    v_effective_unit_price := v_calc_unit_price;
+                    v_promo_snapshots := v_promo_snapshots || jsonb_build_object(
+                        'type', 'product_promotion',
+                        'promotion_id', v_p.id,
+                        'name', v_p.name,
+                        'product_id', v_product_id,
+                        'discount_value', v_p.discount_value,
+                        'discount_type', v_p.discount_type
+                    );
+                END IF;
+            END LOOP;
+
+            -- If no specific product promotion, check category promotion
+            IF v_effective_unit_price = v_base_unit_price AND v_prod.category_id IS NOT NULL THEN
+                FOR v_p IN
+                    SELECT p.*
+                    FROM public.promotions p
+                    JOIN public.promotion_categories pc ON pc.promotion_id = p.id
+                    WHERE pc.category_id = v_prod.category_id
+                    AND p.status = 'active'
+                    AND p.start_at <= v_now
+                    AND (p.end_at IS NULL OR p.end_at > v_now)
+                    ORDER BY p.discount_value DESC
+                    LIMIT 1
+                LOOP
+                    IF v_p.discount_type = 'percentage' THEN
+                        v_calc_unit_price := round(v_base_unit_price * (1.0 - (v_p.discount_value / 100.0)), 2);
+                    ELSIF v_p.discount_type = 'fixed_amount' THEN
+                        v_calc_unit_price := GREATEST(0.00, v_base_unit_price - v_p.discount_value);
+                    END IF;
+
+                    IF v_calc_unit_price < v_effective_unit_price THEN
+                        v_effective_unit_price := v_calc_unit_price;
+                        v_promo_snapshots := v_promo_snapshots || jsonb_build_object(
+                            'type', 'category_promotion',
+                            'promotion_id', v_p.id,
+                            'name', v_p.name,
+                            'category_id', v_prod.category_id,
+                            'discount_value', v_p.discount_value,
+                            'discount_type', v_p.discount_type
+                        );
+                    END IF;
+                END LOOP;
+            END IF;
+        END;
+
+        v_line_item_discount := round((v_base_unit_price - v_effective_unit_price) * v_quantity, 2);
+        v_product_promo_discount := v_product_promo_discount + v_line_item_discount;
+        v_line_total := round(v_effective_unit_price * v_quantity, 2);
+        v_subtotal := v_subtotal + round(v_base_unit_price * v_quantity, 2);
+
+        -- Stock deduction
+        v_current_stock := v_prod.stock_quantity;
+        v_new_stock := v_current_stock - v_quantity;
+
+        UPDATE public.products
+        SET stock_quantity = v_new_stock,
+            updated_at = v_now
+        WHERE id = v_product_id;
+
+        -- Immutable inventory movement ledger
+        INSERT INTO public.inventory_movements (
+            product_id,
+            movement_type,
+            quantity,
+            previous_stock,
+            resulting_stock,
+            reference_type,
+            reference_id,
+            unit_cost,
+            notes,
+            created_by
+        )
+        VALUES (
+            v_product_id,
+            'sale',
+            -v_quantity,
+            v_current_stock,
+            v_new_stock,
+            'order',
+            v_order_id,
+            v_prod.purchase_cost,
+            'Customer Order ' || v_order_number,
+            p_user_id
+        );
+
+        -- Insert order item
+        INSERT INTO public.order_items (
+            order_id,
+            product_id,
+            product_name,
+            quantity,
+            selling_price,
+            purchase_cost_at_sale,
+            discount_amount,
+            total_amount
+        )
+        VALUES (
+            v_order_id,
+            v_product_id,
+            v_prod.name,
+            v_quantity,
+            v_effective_unit_price,
+            v_prod.purchase_cost,
+            v_line_item_discount,
+            v_line_total
+        );
+
+        v_items_count := v_items_count + 1;
+    END LOOP;
+
+    -- Subtotal after product-level discounts
+    v_taxable_subtotal := v_subtotal - v_product_promo_discount;
+
+    -- 5. Evaluate Cart / Minimum Spend / First Order Promotions (if not exclusive)
+    FOR v_cart_promo IN
+        SELECT p.*
+        FROM public.promotions p
+        WHERE p.promotion_type IN ('cart', 'minimum_spend', 'first_order')
+        AND p.status = 'active'
+        AND p.start_at <= v_now
+        AND (p.end_at IS NULL OR p.end_at > v_now)
+        AND v_taxable_subtotal >= p.minimum_order_amount
+        ORDER BY p.discount_value DESC
+        LIMIT 1
+    LOOP
+        -- If first order promotion, verify customer order history
+        IF v_cart_promo.promotion_type = 'first_order' THEN
+            IF p_customer_id IS NOT NULL THEN
+                PERFORM 1 FROM public.orders
+                WHERE customer_id = p_customer_id
+                AND status NOT IN ('cancelled', 'failed_delivery');
+                IF FOUND THEN
+                    CONTINUE; -- Not eligible for first-order discount
+                END IF;
+            END IF;
+        END IF;
+
+        IF v_cart_promo.discount_type = 'percentage' THEN
+            v_cart_promo_discount := round(v_taxable_subtotal * (v_cart_promo.discount_value / 100.0), 2);
+            IF v_cart_promo.maximum_discount_amount IS NOT NULL THEN
+                v_cart_promo_discount := LEAST(v_cart_promo_discount, v_cart_promo.maximum_discount_amount);
+            END IF;
+        ELSIF v_cart_promo.discount_type = 'fixed_amount' THEN
+            v_cart_promo_discount := LEAST(v_taxable_subtotal, v_cart_promo.discount_value);
+        END IF;
+
+        IF v_cart_promo_discount > 0 THEN
+            v_promo_snapshots := v_promo_snapshots || jsonb_build_object(
+                'type', v_cart_promo.promotion_type,
+                'promotion_id', v_cart_promo.id,
+                'name', v_cart_promo.name,
+                'discount_value', v_cart_promo.discount_value,
+                'discount_type', v_cart_promo.discount_type,
+                'discount_amount', v_cart_promo_discount
+            );
+        END IF;
+    END LOOP;
+
+    v_taxable_subtotal := GREATEST(0.00, v_taxable_subtotal - v_cart_promo_discount);
+
+    -- 6. Evaluate Coupon (if provided)
+    IF p_coupon_code IS NOT NULL AND length(trim(p_coupon_code)) > 0 THEN
+        v_coupon_normalized := upper(trim(p_coupon_code));
+
+        -- Lock coupon row FOR UPDATE
+        SELECT c.*, p.discount_type, p.discount_value, p.minimum_order_amount as promo_min_order, p.maximum_discount_amount as promo_max_discount
+        INTO v_coupon
+        FROM public.coupons c
+        JOIN public.promotions p ON p.id = c.promotion_id
+        WHERE c.code = v_coupon_normalized
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Coupon code "%" is invalid', v_coupon_normalized;
+        END IF;
+
+        IF NOT v_coupon.is_active THEN
+            RAISE EXCEPTION 'Coupon "%" is no longer active', v_coupon_normalized;
+        END IF;
+
+        IF v_coupon.start_at > v_now THEN
+            RAISE EXCEPTION 'Coupon "%" is not valid yet', v_coupon_normalized;
+        END IF;
+
+        IF v_coupon.end_at IS NOT NULL AND v_coupon.end_at <= v_now THEN
+            RAISE EXCEPTION 'Coupon "%" has expired', v_coupon_normalized;
+        END IF;
+
+        IF v_coupon.usage_limit IS NOT NULL AND v_coupon.usage_count >= v_coupon.usage_limit THEN
+            RAISE EXCEPTION 'Coupon "%" has reached its maximum usage limit', v_coupon_normalized;
+        END IF;
+
+        -- Check minimum order threshold
+        IF v_coupon.minimum_order_amount IS NOT NULL AND v_taxable_subtotal < v_coupon.minimum_order_amount THEN
+            RAISE EXCEPTION 'Order subtotal (AED %) is less than coupon minimum required (AED %)',
+                v_taxable_subtotal, v_coupon.minimum_order_amount;
+        END IF;
+
+        -- Check customer usage limit
+        IF p_customer_id IS NOT NULL THEN
+            SELECT count(*) INTO v_cust_coupon_uses
+            FROM public.coupon_redemptions
+            WHERE coupon_id = v_coupon.id AND customer_id = p_customer_id;
+
+            IF v_cust_coupon_uses >= v_coupon.per_customer_limit THEN
+                RAISE EXCEPTION 'You have already used coupon "%" the maximum allowed times', v_coupon_normalized;
+            END IF;
+        END IF;
+
+        -- Calculate coupon discount
+        IF v_coupon.discount_type = 'percentage' THEN
+            v_coupon_discount := round(v_taxable_subtotal * (v_coupon.discount_value / 100.0), 2);
+            IF v_coupon.maximum_discount_amount IS NOT NULL THEN
+                v_coupon_discount := LEAST(v_coupon_discount, v_coupon.maximum_discount_amount);
+            ELSIF v_coupon.promo_max_discount IS NOT NULL THEN
+                v_coupon_discount := LEAST(v_coupon_discount, v_coupon.promo_max_discount);
+            END IF;
+        ELSIF v_coupon.discount_type = 'fixed_amount' THEN
+            v_coupon_discount := LEAST(v_taxable_subtotal, v_coupon.discount_value);
+        END IF;
+
+        -- Atomic update to coupon usage
+        UPDATE public.coupons
+        SET usage_count = usage_count + 1,
+            updated_at = v_now
+        WHERE id = v_coupon.id;
+
+        -- Insert coupon redemption
+        IF p_customer_id IS NOT NULL THEN
+            INSERT INTO public.coupon_redemptions (
+                coupon_id,
+                customer_id,
+                order_id,
+                discount_amount,
+                redeemed_at
+            )
+            VALUES (
+                v_coupon.id,
+                p_customer_id,
+                v_order_id,
+                v_coupon_discount,
+                v_now
+            );
+        END IF;
+
+        v_taxable_subtotal := GREATEST(0.00, v_taxable_subtotal - v_coupon_discount);
+    END IF;
+
+    -- 7. Evaluate Loyalty Redemption (if requested)
+    IF p_loyalty_points_to_redeem > 0 THEN
+        IF p_customer_id IS NULL THEN
+            RAISE EXCEPTION 'Customer account required to redeem loyalty points';
+        END IF;
+
+        -- Lock loyalty account row FOR UPDATE
+        SELECT * INTO v_loyalty_acct
+        FROM public.customer_loyalty_accounts
+        WHERE customer_id = p_customer_id
+        FOR UPDATE;
+
+        IF NOT FOUND OR v_loyalty_acct.points_balance < p_loyalty_points_to_redeem THEN
+            RAISE EXCEPTION 'Insufficient loyalty points. Balance: %, Requested: %',
+                COALESCE(v_loyalty_acct.points_balance, 0), p_loyalty_points_to_redeem;
+        END IF;
+
+        -- Calculate monetary value of redeemed points
+        v_loyalty_discount := round(p_loyalty_points_to_redeem * v_loyalty_pts_rate, 2);
+        -- Ensure loyalty discount does not exceed the remaining payable merchandise amount
+        v_loyalty_discount := LEAST(v_loyalty_discount, v_taxable_subtotal);
+
+        -- Deduct points
+        UPDATE public.customer_loyalty_accounts
+        SET points_balance = points_balance - p_loyalty_points_to_redeem,
+            lifetime_points_redeemed = lifetime_points_redeemed + p_loyalty_points_to_redeem,
+            updated_at = v_now
+        WHERE customer_id = p_customer_id;
+
+        -- Record immutable loyalty transaction
+        INSERT INTO public.loyalty_transactions (
+            customer_id,
+            order_id,
+            transaction_type,
+            points,
+            balance_before,
+            balance_after,
+            reason,
+            created_by,
+            created_at
+        )
+        VALUES (
+            p_customer_id,
+            v_order_id,
+            'redeem',
+            -p_loyalty_points_to_redeem,
+            v_loyalty_acct.points_balance,
+            v_loyalty_acct.points_balance - p_loyalty_points_to_redeem,
+            'Redeemed on Order ' || v_order_number,
+            p_user_id,
+            v_now
+        );
+
+        v_taxable_subtotal := GREATEST(0.00, v_taxable_subtotal - v_loyalty_discount);
+    END IF;
+
+    -- Total combined discount
+    v_total_discount := v_product_promo_discount + v_cart_promo_discount + v_coupon_discount + v_loyalty_discount;
+
+    -- 8. Calculate UAE VAT (5%) on final taxable merchandise amount
+    v_tax_amount := round(v_taxable_subtotal * v_tax_rate, 2);
+
+    -- 9. Delivery fee (standard rule: free if original merchandise subtotal >= 100 AED, else 10 AED)
+    IF (v_subtotal - v_product_promo_discount) >= 100.00 THEN
+        v_delivery_fee := 0.00;
+    ELSE
+        v_delivery_fee := 10.00;
+    END IF;
+
+    -- Authoritative Grand Total
+    v_grand_total := v_taxable_subtotal + v_tax_amount + v_delivery_fee;
+
+    -- 10. Insert Order Header with comprehensive commercial snapshots
+    INSERT INTO public.orders (
+        id,
+        order_number,
+        customer_id,
+        order_source,
+        status,
+        payment_method,
+        payment_status,
+        subtotal,
+        discount_amount,
+        promotion_discount,
+        coupon_discount,
+        loyalty_discount,
+        coupon_id,
+        coupon_code_snapshot,
+        loyalty_points_redeemed,
+        loyalty_points_earned,
+        promotion_snapshots,
+        tax_amount,
+        delivery_fee,
+        total_amount,
+        delivery_address,
+        delivery_notes,
+        order_date,
+        created_by,
+        created_at,
+        updated_at
+    )
+    VALUES (
+        v_order_id,
+        v_order_number,
+        p_customer_id,
+        p_order_source,
+        'pending',
+        p_payment_method,
+        'pending',
+        v_subtotal,
+        v_total_discount,
+        (v_product_promo_discount + v_cart_promo_discount),
+        v_coupon_discount,
+        v_loyalty_discount,
+        v_coupon.id,
+        v_coupon_normalized,
+        p_loyalty_points_to_redeem,
+        0, -- earned on delivery
+        v_promo_snapshots,
+        v_tax_amount,
+        v_delivery_fee,
+        v_grand_total,
+        p_delivery_address,
+        p_delivery_notes,
+        v_now,
+        p_user_id,
+        v_now,
+        v_now
+    );
+
+    -- 11. Create deliveries tracking row
+    INSERT INTO public.deliveries (
+        order_id,
+        assigned_to,
+        status,
+        delivery_address,
+        delivery_notes,
+        created_at,
+        updated_at
+    )
+    VALUES (
+        v_order_id,
+        NULL,
+        'unassigned',
+        p_delivery_address,
+        p_delivery_notes,
+        v_now,
+        v_now
+    );
+
+    -- 12. Create initial order status history
+    INSERT INTO public.order_status_history (
+        order_id,
+        from_status,
+        to_status,
+        changed_by,
+        reason,
+        notes
+    )
+    VALUES (
+        v_order_id,
+        NULL,
+        'pending',
+        p_user_id,
+        'Order placed online',
+        'Customer completed storefront checkout'
+    );
+
+    -- 13. Update customer stats
+    IF p_customer_id IS NOT NULL THEN
+        UPDATE public.customers
+        SET total_orders = total_orders + 1,
+            total_spend = total_spend + v_grand_total,
+            updated_at = v_now
+        WHERE id = p_customer_id;
+    END IF;
+
+    -- Return comprehensive result
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', v_order_id,
+        'order_number', v_order_number,
+        'items_count', v_items_count,
+        'subtotal', v_subtotal,
+        'product_promo_discount', v_product_promo_discount,
+        'cart_promo_discount', v_cart_promo_discount,
+        'coupon_discount', v_coupon_discount,
+        'loyalty_discount', v_loyalty_discount,
+        'discount_amount', v_total_discount,
+        'tax_amount', v_tax_amount,
+        'delivery_fee', v_delivery_fee,
+        'total_amount', v_grand_total
+    );
+END;
+$$;
+
+-- 13. UPDATE transition_order_status_atomic TO AWARD LOYALTY POINTS ON DELIVERY
+CREATE OR REPLACE FUNCTION public.transition_order_status_atomic(
+    p_order_id UUID,
+    p_next_status public.order_status,
+    p_reason TEXT DEFAULT NULL,
+    p_notes TEXT DEFAULT NULL,
+    p_driver_id UUID DEFAULT NULL,
+    p_failure_reason TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order RECORD;
+    v_prev_status public.order_status;
+    v_actor_id UUID;
+    v_now TIMESTAMPTZ := now();
+    v_notif_title TEXT;
+    v_notif_msg TEXT;
+    v_customer_user_id UUID;
+    v_delivery_status TEXT;
+    v_eligible_spend NUMERIC(12, 2);
+    v_points_to_award INTEGER := 0;
+    v_loyalty_acct RECORD;
+BEGIN
+    v_actor_id := auth.uid();
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Unauthorized: Only store staff can transition operational order status';
+    END IF;
+
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order % not found', p_order_id;
+    END IF;
+
+    v_prev_status := v_order.status;
+
+    IF v_prev_status = p_next_status THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'message', 'Order is already in status ' || p_next_status,
+            'order_id', p_order_id,
+            'status', p_next_status
+        );
+    END IF;
+
+    -- Validate state transitions
+    IF v_prev_status = 'pending' AND p_next_status NOT IN ('confirmed', 'cancelled') THEN
+        RAISE EXCEPTION 'Invalid transition: pending orders can only transition to confirmed or cancelled';
+    ELSIF v_prev_status = 'confirmed' AND p_next_status NOT IN ('preparing', 'cancelled') THEN
+        RAISE EXCEPTION 'Invalid transition: confirmed orders can only transition to preparing or cancelled';
+    ELSIF v_prev_status = 'preparing' AND p_next_status NOT IN ('ready', 'cancelled') THEN
+        RAISE EXCEPTION 'Invalid transition: preparing orders can only transition to ready or cancelled';
+    ELSIF v_prev_status = 'ready' AND p_next_status NOT IN ('out_for_delivery', 'cancelled') THEN
+        RAISE EXCEPTION 'Invalid transition: ready orders can only transition to out_for_delivery or cancelled';
+    ELSIF v_prev_status = 'out_for_delivery' AND p_next_status NOT IN ('delivered', 'failed_delivery', 'cancelled') THEN
+        RAISE EXCEPTION 'Invalid transition: out_for_delivery orders can only transition to delivered, failed_delivery, or cancelled';
+    ELSIF v_prev_status = 'failed_delivery' AND p_next_status NOT IN ('out_for_delivery', 'cancelled') THEN
+        RAISE EXCEPTION 'Invalid transition: failed_delivery orders can only be re-dispatched or cancelled';
+    ELSIF v_prev_status IN ('delivered', 'cancelled') THEN
+        RAISE EXCEPTION 'Terminal state reached: order % cannot transition from %', v_order.order_number, v_prev_status;
+    END IF;
+
+    -- Status updates
+    IF p_next_status = 'confirmed' THEN
+        UPDATE public.orders
+        SET status = p_next_status,
+            confirmed_at = COALESCE(confirmed_at, v_now),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Confirmed';
+        v_notif_msg := 'Order ' || v_order.order_number || ' has been confirmed by Baqqala staff.';
+
+    ELSIF p_next_status = 'preparing' THEN
+        UPDATE public.orders
+        SET status = p_next_status,
+            preparing_at = COALESCE(preparing_at, v_now),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Being Prepared';
+        v_notif_msg := 'We are packing the items for order ' || v_order.order_number || '.';
+
+    ELSIF p_next_status = 'ready' THEN
+        UPDATE public.orders
+        SET status = p_next_status,
+            ready_at = COALESCE(ready_at, v_now),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Ready for Delivery';
+        v_notif_msg := 'Order ' || v_order.order_number || ' is packed and awaiting dispatch.';
+
+    ELSIF p_next_status = 'out_for_delivery' THEN
+        IF p_driver_id IS NOT NULL THEN
+            UPDATE public.orders
+            SET assigned_driver_id = p_driver_id
+            WHERE id = p_order_id;
+        END IF;
+
+        UPDATE public.orders
+        SET status = p_next_status,
+            out_for_delivery_at = COALESCE(out_for_delivery_at, v_now),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Out for Delivery';
+        v_notif_msg := 'Your grocery order ' || v_order.order_number || ' is on its way to your Zone 19 address.';
+
+    ELSIF p_next_status = 'delivered' THEN
+        -- AWARD LOYALTY POINTS IF NOT ALREADY AWARDED
+        IF v_order.customer_id IS NOT NULL AND v_order.loyalty_points_earned = 0 THEN
+            -- Eligible merchandise spend = subtotal - product/cart/coupon discounts
+            v_eligible_spend := GREATEST(0.00, v_order.subtotal - v_order.discount_amount);
+            -- 1 point per 1 AED eligible spend
+            v_points_to_award := floor(v_eligible_spend);
+
+            IF v_points_to_award > 0 THEN
+                -- Lock or create loyalty account
+                SELECT * INTO v_loyalty_acct
+                FROM public.customer_loyalty_accounts
+                WHERE customer_id = v_order.customer_id
+                FOR UPDATE;
+
+                IF NOT FOUND THEN
+                    INSERT INTO public.customer_loyalty_accounts (customer_id, points_balance, lifetime_points_earned, lifetime_points_redeemed, created_at, updated_at)
+                    VALUES (v_order.customer_id, v_points_to_award, v_points_to_award, 0, v_now, v_now)
+                    RETURNING * INTO v_loyalty_acct;
+                ELSE
+                    UPDATE public.customer_loyalty_accounts
+                    SET points_balance = points_balance + v_points_to_award,
+                        lifetime_points_earned = lifetime_points_earned + v_points_to_award,
+                        updated_at = v_now
+                    WHERE customer_id = v_order.customer_id;
+                END IF;
+
+                -- Insert immutable loyalty transaction ledger
+                INSERT INTO public.loyalty_transactions (
+                    customer_id,
+                    order_id,
+                    transaction_type,
+                    points,
+                    balance_before,
+                    balance_after,
+                    reason,
+                    created_by,
+                    created_at
+                )
+                VALUES (
+                    v_order.customer_id,
+                    p_order_id,
+                    'earn',
+                    v_points_to_award,
+                    COALESCE(v_loyalty_acct.points_balance - v_points_to_award, 0),
+                    v_loyalty_acct.points_balance,
+                    'Earned from Delivered Order ' || v_order.order_number,
+                    v_actor_id,
+                    v_now
+                );
+            END IF;
+        END IF;
+
+        UPDATE public.orders
+        SET status = p_next_status,
+            delivered_at = COALESCE(delivered_at, v_now),
+            loyalty_points_earned = v_points_to_award,
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Order Delivered';
+        v_notif_msg := 'Order ' || v_order.order_number || ' has been successfully delivered. You earned ' || v_points_to_award || ' loyalty points!';
+
+    ELSIF p_next_status = 'failed_delivery' THEN
+        UPDATE public.orders
+        SET status = p_next_status,
+            failed_at = v_now,
+            failure_reason = COALESCE(p_failure_reason, 'Delivery attempt unsuccessful'),
+            updated_at = v_now
+        WHERE id = p_order_id;
+        v_notif_title := 'Delivery Exception';
+        v_notif_msg := 'Delivery could not be completed for order ' || v_order.order_number || '. Staff will contact you.';
+
+    ELSIF p_next_status = 'cancelled' THEN
+        RAISE EXCEPTION 'Please use cancel_order_staff_atomic for cancellation to handle stock and loyalty restoration';
+    END IF;
+
+    -- Synchronize deliveries table
+    IF p_next_status = 'out_for_delivery' THEN
+        v_delivery_status := 'out_for_delivery';
+    ELSIF p_next_status = 'delivered' THEN
+        v_delivery_status := 'delivered';
+    ELSIF p_next_status = 'failed_delivery' THEN
+        v_delivery_status := 'failed';
+    ELSIF p_driver_id IS NOT NULL OR v_order.assigned_driver_id IS NOT NULL THEN
+        v_delivery_status := 'assigned';
+    ELSE
+        v_delivery_status := 'unassigned';
+    END IF;
+
+    INSERT INTO public.deliveries (
+        order_id,
+        assigned_to,
+        status,
+        delivery_address,
+        recipient_name,
+        recipient_phone,
+        delivery_notes,
+        assigned_at,
+        picked_up_at,
+        delivered_at,
+        failed_at,
+        failure_reason,
+        updated_at
+    )
+    VALUES (
+        p_order_id,
+        COALESCE(p_driver_id, v_order.assigned_driver_id),
+        v_delivery_status,
+        v_order.delivery_address,
+        v_order.recipient_name,
+        v_order.recipient_phone,
+        v_order.delivery_notes,
+        CASE WHEN p_driver_id IS NOT NULL THEN v_now ELSE NULL END,
+        CASE WHEN p_next_status = 'out_for_delivery' THEN v_now ELSE NULL END,
+        CASE WHEN p_next_status = 'delivered' THEN v_now ELSE NULL END,
+        CASE WHEN p_next_status = 'failed_delivery' THEN v_now ELSE NULL END,
+        p_failure_reason,
+        v_now
+    )
+    ON CONFLICT (order_id) DO UPDATE
+    SET assigned_to = COALESCE(EXCLUDED.assigned_to, deliveries.assigned_to),
+        status = EXCLUDED.status,
+        picked_up_at = COALESCE(deliveries.picked_up_at, EXCLUDED.picked_up_at),
+        delivered_at = COALESCE(deliveries.delivered_at, EXCLUDED.delivered_at),
+        failed_at = COALESCE(deliveries.failed_at, EXCLUDED.failed_at),
+        failure_reason = COALESCE(EXCLUDED.failure_reason, deliveries.failure_reason),
+        updated_at = v_now;
+
+    -- Insert status history
+    INSERT INTO public.order_status_history (
+        order_id,
+        from_status,
+        to_status,
+        changed_by,
+        reason,
+        notes
+    )
+    VALUES (
+        p_order_id,
+        v_prev_status,
+        p_next_status,
+        v_actor_id,
+        p_reason,
+        p_notes
+    );
+
+    -- Customer notification
+    IF v_order.customer_id IS NOT NULL THEN
+        SELECT auth_user_id INTO v_customer_user_id
+        FROM public.customers
+        WHERE id = v_order.customer_id;
+
+        IF v_customer_user_id IS NOT NULL AND v_notif_title IS NOT NULL THEN
+            INSERT INTO public.notifications (
+                user_id,
+                title,
+                message,
+                type,
+                link
+            )
+            VALUES (
+                v_customer_user_id,
+                v_notif_title,
+                v_notif_msg,
+                'order',
+                '/account/orders/' || p_order_id
+            );
+        END IF;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'order_number', v_order.order_number,
+        'previous_status', v_prev_status,
+        'current_status', p_next_status,
+        'loyalty_points_awarded', v_points_to_award,
+        'updated_at', v_now
+    );
+END;
+$$;
+
+-- 14. UPDATE cancel_order_staff_atomic TO REVERSE COUPONS AND RESTORE REDEEMED LOYALTY POINTS
+CREATE OR REPLACE FUNCTION public.cancel_order_staff_atomic(
+    p_order_id UUID,
+    p_reason TEXT,
+    p_restock BOOLEAN DEFAULT TRUE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order RECORD;
+    v_item RECORD;
+    v_prod RECORD;
+    v_current_stock NUMERIC(12, 3);
+    v_new_stock NUMERIC(12, 3);
+    v_now TIMESTAMPTZ := now();
+    v_actor_id UUID;
+    v_items_restored INTEGER := 0;
+    v_customer_user_id UUID;
+    v_loyalty_acct RECORD;
+BEGIN
+    v_actor_id := auth.uid();
+    IF NOT public.is_staff() THEN
+        RAISE EXCEPTION 'Unauthorized: Only staff can perform administrative cancellation';
+    END IF;
+
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order % not found', p_order_id;
+    END IF;
+
+    IF v_order.status = 'cancelled' THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'message', 'Order is already cancelled',
+            'order_id', p_order_id
+        );
+    END IF;
+
+    IF v_order.status = 'delivered' THEN
+        RAISE EXCEPTION 'Cannot cancel order % because it has already been delivered', v_order.order_number;
+    END IF;
+
+    -- Restore inventory if restock requested
+    IF p_restock THEN
+        FOR v_item IN
+            SELECT * FROM public.order_items WHERE order_id = p_order_id
+        LOOP
+            IF v_item.product_id IS NOT NULL THEN
+                SELECT stock_quantity, purchase_cost INTO v_prod
+                FROM public.products
+                WHERE id = v_item.product_id
+                FOR UPDATE;
+
+                IF FOUND THEN
+                    v_current_stock := v_prod.stock_quantity;
+                    v_new_stock := v_current_stock + v_item.quantity;
+
+                    UPDATE public.products
+                    SET stock_quantity = v_new_stock,
+                        updated_at = v_now
+                    WHERE id = v_item.product_id;
+
+                    INSERT INTO public.inventory_movements (
+                        product_id,
+                        movement_type,
+                        quantity,
+                        previous_stock,
+                        resulting_stock,
+                        reference_type,
+                        reference_id,
+                        unit_cost,
+                        notes,
+                        created_by
+                    )
+                    VALUES (
+                        v_item.product_id,
+                        'customer_return',
+                        v_item.quantity,
+                        v_current_stock,
+                        v_new_stock,
+                        'order',
+                        p_order_id,
+                        v_prod.purchase_cost,
+                        'Restock for cancelled order ' || v_order.order_number,
+                        v_actor_id
+                    );
+
+                    v_items_restored := v_items_restored + 1;
+                END IF;
+            END IF;
+        END LOOP;
+    END IF;
+
+    -- Reverse coupon usage count and redemptions
+    IF v_order.coupon_id IS NOT NULL THEN
+        UPDATE public.coupons
+        SET usage_count = GREATEST(0, usage_count - 1),
+            updated_at = v_now
+        WHERE id = v_order.coupon_id;
+
+        DELETE FROM public.coupon_redemptions
+        WHERE order_id = p_order_id;
+    END IF;
+
+    -- Restore redeemed loyalty points to customer account
+    IF v_order.customer_id IS NOT NULL AND v_order.loyalty_points_redeemed > 0 THEN
+        SELECT * INTO v_loyalty_acct
+        FROM public.customer_loyalty_accounts
+        WHERE customer_id = v_order.customer_id
+        FOR UPDATE;
+
+        IF FOUND THEN
+            UPDATE public.customer_loyalty_accounts
+            SET points_balance = points_balance + v_order.loyalty_points_redeemed,
+                lifetime_points_redeemed = GREATEST(0, lifetime_points_redeemed - v_order.loyalty_points_redeemed),
+                updated_at = v_now
+            WHERE customer_id = v_order.customer_id;
+
+            INSERT INTO public.loyalty_transactions (
+                customer_id,
+                order_id,
+                transaction_type,
+                points,
+                balance_before,
+                balance_after,
+                reason,
+                created_by,
+                created_at
+            )
+            VALUES (
+                v_order.customer_id,
+                p_order_id,
+                'reversal',
+                v_order.loyalty_points_redeemed,
+                v_loyalty_acct.points_balance,
+                v_loyalty_acct.points_balance + v_order.loyalty_points_redeemed,
+                'Restored redeemed points for cancelled order ' || v_order.order_number,
+                v_actor_id,
+                v_now
+            );
+        END IF;
+    END IF;
+
+    -- Update order to cancelled
+    UPDATE public.orders
+    SET status = 'cancelled',
+        cancelled_at = v_now,
+        cancellation_reason = p_reason,
+        updated_at = v_now
+    WHERE id = p_order_id;
+
+    -- Update deliveries table
+    UPDATE public.deliveries
+    SET status = 'failed',
+        failed_at = v_now,
+        failure_reason = 'Cancelled by staff: ' || p_reason,
+        updated_at = v_now
+    WHERE order_id = p_order_id;
+
+    -- Status history
+    INSERT INTO public.order_status_history (
+        order_id,
+        from_status,
+        to_status,
+        changed_by,
+        reason,
+        notes
+    )
+    VALUES (
+        p_order_id,
+        v_order.status,
+        'cancelled',
+        v_actor_id,
+        p_reason,
+        CASE WHEN p_restock THEN 'Restocked ' || v_items_restored || ' items' ELSE 'Stock not restored' END
+    );
+
+    -- Notify customer
+    IF v_order.customer_id IS NOT NULL THEN
+        SELECT auth_user_id INTO v_customer_user_id
+        FROM public.customers
+        WHERE id = v_order.customer_id;
+
+        IF v_customer_user_id IS NOT NULL THEN
+            INSERT INTO public.notifications (
+                user_id,
+                title,
+                message,
+                type,
+                link
+            )
+            VALUES (
+                v_customer_user_id,
+                'Order Cancelled',
+                'Your order ' || v_order.order_number || ' was cancelled. Reason: ' || p_reason,
+                'order',
+                '/account/orders/' || p_order_id
+            );
+        END IF;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'order_number', v_order.order_number,
+        'items_restored', v_items_restored,
+        'loyalty_points_restored', v_order.loyalty_points_redeemed
+    );
+END;
+$$;
+
+-- 15. UPDATE cancel_customer_order_atomic FOR ONLINE CUSTOMER SELF-CANCELLATION
+CREATE OR REPLACE FUNCTION public.cancel_customer_order_atomic(
+    p_order_id UUID,
+    p_reason TEXT DEFAULT NULL,
+    p_user_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_order RECORD;
+    v_item RECORD;
+    v_prod RECORD;
+    v_current_stock NUMERIC(12, 3);
+    v_new_stock NUMERIC(12, 3);
+    v_now TIMESTAMPTZ := now();
+    v_items_restored INTEGER := 0;
+    v_loyalty_acct RECORD;
+BEGIN
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order % not found', p_order_id;
+    END IF;
+
+    IF v_order.status IN ('cancelled', 'delivered', 'returned') THEN
+        RAISE EXCEPTION 'Order cannot be cancelled in status %', v_order.status;
+    END IF;
+
+    -- Only allow online customer cancellation if status is 'pending' or 'confirmed'
+    IF NOT public.is_staff() AND v_order.status NOT IN ('pending', 'confirmed') THEN
+        RAISE EXCEPTION 'Order is already being prepared or dispatched and cannot be cancelled online';
+    END IF;
+
+    -- Restore stock
+    FOR v_item IN
+        SELECT * FROM public.order_items WHERE order_id = p_order_id
+    LOOP
+        IF v_item.product_id IS NOT NULL THEN
+            SELECT stock_quantity, purchase_cost INTO v_prod
+            FROM public.products
+            WHERE id = v_item.product_id
+            FOR UPDATE;
+
+            IF FOUND THEN
+                v_current_stock := v_prod.stock_quantity;
+                v_new_stock := v_current_stock + v_item.quantity;
+
+                UPDATE public.products
+                SET stock_quantity = v_new_stock,
+                    updated_at = v_now
+                WHERE id = v_item.product_id;
+
+                INSERT INTO public.inventory_movements (
+                    product_id,
+                    movement_type,
+                    quantity,
+                    previous_stock,
+                    resulting_stock,
+                    reference_type,
+                    reference_id,
+                    unit_cost,
+                    notes,
+                    created_by
+                )
+                VALUES (
+                    v_item.product_id,
+                    'customer_return',
+                    v_item.quantity,
+                    v_current_stock,
+                    v_new_stock,
+                    'order',
+                    p_order_id,
+                    v_prod.purchase_cost,
+                    'Customer cancelled order ' || v_order.order_number,
+                    p_user_id
+                );
+
+                v_items_restored := v_items_restored + 1;
+            END IF;
+        END IF;
+    END LOOP;
+
+    -- Reverse coupon usage
+    IF v_order.coupon_id IS NOT NULL THEN
+        UPDATE public.coupons
+        SET usage_count = GREATEST(0, usage_count - 1),
+            updated_at = v_now
+        WHERE id = v_order.coupon_id;
+
+        DELETE FROM public.coupon_redemptions
+        WHERE order_id = p_order_id;
+    END IF;
+
+    -- Restore redeemed loyalty points
+    IF v_order.customer_id IS NOT NULL AND v_order.loyalty_points_redeemed > 0 THEN
+        SELECT * INTO v_loyalty_acct
+        FROM public.customer_loyalty_accounts
+        WHERE customer_id = v_order.customer_id
+        FOR UPDATE;
+
+        IF FOUND THEN
+            UPDATE public.customer_loyalty_accounts
+            SET points_balance = points_balance + v_order.loyalty_points_redeemed,
+                lifetime_points_redeemed = GREATEST(0, lifetime_points_redeemed - v_order.loyalty_points_redeemed),
+                updated_at = v_now
+            WHERE customer_id = v_order.customer_id;
+
+            INSERT INTO public.loyalty_transactions (
+                customer_id,
+                order_id,
+                transaction_type,
+                points,
+                balance_before,
+                balance_after,
+                reason,
+                created_by,
+                created_at
+            )
+            VALUES (
+                v_order.customer_id,
+                p_order_id,
+                'reversal',
+                v_order.loyalty_points_redeemed,
+                v_loyalty_acct.points_balance,
+                v_loyalty_acct.points_balance + v_order.loyalty_points_redeemed,
+                'Restored redeemed points for customer-cancelled order ' || v_order.order_number,
+                p_user_id,
+                v_now
+            );
+        END IF;
+    END IF;
+
+    -- Update order
+    UPDATE public.orders
+    SET status = 'cancelled',
+        cancelled_at = v_now,
+        cancellation_reason = COALESCE(p_reason, 'Cancelled by customer online'),
+        updated_at = v_now
+    WHERE id = p_order_id;
+
+    -- Update deliveries
+    UPDATE public.deliveries
+    SET status = 'failed',
+        failed_at = v_now,
+        failure_reason = 'Cancelled by customer: ' || COALESCE(p_reason, 'Online self-cancellation'),
+        updated_at = v_now
+    WHERE order_id = p_order_id;
+
+    -- History
+    INSERT INTO public.order_status_history (
+        order_id,
+        from_status,
+        to_status,
+        changed_by,
+        reason,
+        notes
+    )
+    VALUES (
+        p_order_id,
+        v_order.status,
+        'cancelled',
+        p_user_id,
+        p_reason,
+        'Self-cancelled by customer online. Restocked ' || v_items_restored || ' items.'
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'order_number', v_order.order_number,
+        'items_restored', v_items_restored,
+        'loyalty_points_restored', v_order.loyalty_points_redeemed
+    );
+END;
+$$;
+
+-- <<< END FILE: 20261006000004_phase8_promotions_pricing_loyalty.sql <<<
