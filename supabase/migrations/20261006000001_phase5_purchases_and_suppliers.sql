@@ -64,7 +64,8 @@ DO $$ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'uq_suppliers_supplier_code'
     ) THEN
-        ALTER TABLE public.suppliers ADD CONSTRAINT uq_suppliers_supplier_code UNIQUE (supplier_code);
+        ALTER TABLE public.suppliers DROP CONSTRAINT IF EXISTS uq_suppliers_supplier_code;
+ALTER TABLE public.suppliers ADD CONSTRAINT uq_suppliers_supplier_code UNIQUE (supplier_code);
     END IF;
 END $$;
 
@@ -89,7 +90,8 @@ DO $$ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'uq_purchases_purchase_number'
     ) THEN
-        ALTER TABLE public.purchases ADD CONSTRAINT uq_purchases_purchase_number UNIQUE (purchase_number);
+        ALTER TABLE public.purchases DROP CONSTRAINT IF EXISTS uq_purchases_purchase_number;
+ALTER TABLE public.purchases ADD CONSTRAINT uq_purchases_purchase_number UNIQUE (purchase_number);
     END IF;
 END $$;
 
