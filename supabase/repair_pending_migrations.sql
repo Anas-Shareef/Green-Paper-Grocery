@@ -1128,7 +1128,7 @@ CREATE TABLE IF NOT EXISTS public.supplier_payments (
     invoice_id UUID REFERENCES public.supplier_invoices(id) ON DELETE SET NULL,
     amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
     payment_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    payment_method public.payment_method NOT NULL DEFAULT 'bank_transfer',
+    payment_method public.payment_method NOT NULL DEFAULT 'other',
     reference TEXT,
     notes TEXT,
     recorded_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
