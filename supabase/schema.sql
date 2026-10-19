@@ -1160,9 +1160,11 @@ DROP POLICY IF EXISTS "price_history_select" ON public.product_price_history;
 CREATE POLICY "price_history_select" ON public.product_price_history
     FOR SELECT USING (public.is_staff());
 
+DROP POLICY IF EXISTS "price_history_insert_service_only" ON public.product_price_history;
 CREATE POLICY "price_history_insert_service_only" ON public.product_price_history
     FOR INSERT TO service_role WITH CHECK (true);
 
+DROP POLICY IF EXISTS "price_history_update_service_only" ON public.product_price_history;
 CREATE POLICY "price_history_update_service_only" ON public.product_price_history
     FOR UPDATE TO service_role USING (true) WITH CHECK (true);
 
